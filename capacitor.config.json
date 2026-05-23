@@ -1,0 +1,17 @@
+{
+  "appId": "com.yourstudio.plunge",
+  "appName": "PLUNGE",
+  "webDir": "dist",
+  "bundledWebRuntime": false,
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1500,
+      "backgroundColor": "#010c18",
+      "showSpinner": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#010c18"
+    }
+  }
+}
