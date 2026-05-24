@@ -122,6 +122,7 @@ export default class GameOver extends Phaser.Scene {
 
     // ── BUTTONS ───────────────────────────────────────────────────────────────
     this._makeBtn(W / 2, H * 0.700, 'DIVE AGAIN', 260, 64, 0x001122, 0x0099cc, 28, () => {
+      this.cache.audio.has('buttonSFX') && this.sound.play('buttonSFX', { volume: 0.7 });
       this.cameras.main.fadeOut(250);
       this.time.delayedCall(250, () => this.scene.start('Game'));
     });
@@ -132,8 +133,9 @@ export default class GameOver extends Phaser.Scene {
     menu.on('pointerover', () => menu.setColor('#6688aa'));
     menu.on('pointerout',  () => menu.setColor('#2a3a44'));
     menu.on('pointerdown', () => {
+      this.cache.audio.has('buttonSFX') && this.sound.play('buttonSFX', { volume: 0.7 });
       this.cameras.main.fadeOut(250);
-      this.time.delayedCall(250, () => this.scene.start('Menu'));
+      this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
     });
 
     // Coin tally reminder

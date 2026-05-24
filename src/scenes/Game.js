@@ -1,52 +1,14 @@
 import {
-  W, H, SAFE_TOP, BIOMES, getBiomeIndex,
+  W, H, SAFE_TOP, BIOMES, getBiomeIndexByTime, BIOME_DURATION_SCALE,
   DIVER_Y, DIVER_ACCEL, DIVER_DRAG, DIVER_MAX_VX, DIVER_TILT, DIVER_MAX_TILT, DIVER_MARGIN,
   PRESSURE_DECAY, PRESSURE_HIT,
 } from '../main.js';
+import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
-const STORAGE_BEST  = 'plunge_best_time';  // seconds
 const STORAGE_COINS = 'plunge_coins';
 
-// Wall skin sprites per biome — scattered as visual decoration on invisible physics rects.
-// pngW/pngH are actual PNG dimensions for aspect-ratio-preserving display.
-// Wide landmark sprites — one drawn per row at near-natural height, spanning the full row.
-// They sit behind the per-zone sprites (depth 5 vs 6) and glow across the gap too via ADD blend.
-const WALL_BG_SKINS = [
-  [ { key: 'coral01',    pngW: 531, pngH: 139 }, { key: 'coral02',    pngW: 523, pngH: 143 } ],
-  [ { key: 'kelp01',     pngW: 694, pngH: 211 }, { key: 'kelp02',     pngW: 713, pngH: 216 } ],
-  [ { key: 'midnight01', pngW: 371, pngH: 212 }, { key: 'midnight02', pngW: 382, pngH: 211 } ],
-  [ { key: 'hadal01',    pngW: 734, pngH: 226 }, { key: 'hadal02',    pngW: 695, pngH: 202 } ],
-];
-
-// Per-zone fill sprites — scaled to cover each physics rect exactly (smaller, zone-friendly).
-const WALL_SKINS = [
-  [ // Coral Reef
-    { key: 'coral03', pngW: 273, pngH: 283 },
-    { key: 'coral04', pngW: 285, pngH: 284 },
-    { key: 'coral05', pngW: 146, pngH: 136 },
-    { key: 'coral06', pngW: 193, pngH: 130 },
-  ],
-  [ // Kelp Forest
-    { key: 'kelp03', pngW: 562, pngH: 253 },
-    { key: 'kelp04', pngW: 453, pngH: 191 },
-    { key: 'kelp05', pngW: 173, pngH: 220 },
-    { key: 'kelp06', pngW: 147, pngH: 309 },
-  ],
-  [ // Midnight Zone
-    { key: 'midnight03', pngW: 227, pngH: 128 },
-    { key: 'midnight04', pngW: 225, pngH: 101 },
-    { key: 'midnight05', pngW: 143, pngH: 135 },
-    { key: 'midnight06', pngW: 132, pngH: 137 },
-  ],
-  [ // Hadal Trench
-    { key: 'hadal03', pngW: 205, pngH: 77  },
-    { key: 'hadal04', pngW: 189, pngH: 78  },
-    { key: 'hadal05', pngW: 151, pngH: 147 },
-    { key: 'hadal06', pngW: 160, pngH: 73  },
-  ],
-];
-
-const WALL_H = 110;
+const WALL_H    = 110;
+const FADE_MS   = 7000;  // biome crossfade — bg images, vignette, and music all use this
 
 export default class Game extends Phaser.Scene {
   constructor() { super('Game'); }
@@ -56,6 +18,7 @@ export default class Game extends Phaser.Scene {
   create() {
     // State
     this.depth      = 0;
+    this.gameTime   = 0;       // elapsed ms (excludes pause/death), drives biome + music
     this.pressure   = 0;       // 0.0 → 1.0 → death
     this.dead       = false;
     this.invincible = false;
@@ -70,6 +33,16 @@ export default class Game extends Phaser.Scene {
 
     this.decorations = [];
 
+    // Pre-create one reusable instance per SFX — safe: returns null if file wasn't loaded.
+    // All play calls use optional chaining so a missing file never crashes the game.
+    const _snd = (key, vol) =>
+      this.cache.audio.has(key) ? this.sound.add(key, { volume: vol }) : null;
+    this._sfx = {
+      button: _snd('buttonSFX', 0.7),
+      woosh:  _snd('wooshSFX',  1.0),
+      hit:    _snd('hitSFX',    0.9),
+    };
+
     // ── WORLD ────────────────────────────────────────────────────────────────
     this.physics.world.gravity.y = 0;
     this.bg = this.add.rectangle(W / 2, H / 2, W, H, BIOMES[0].bg).setDepth(0);
@@ -81,9 +54,11 @@ export default class Game extends Phaser.Scene {
     ];
     this.bgSlot = 0;
 
-    // Shimmer overlay — pulses the current biome's neon color at low opacity
-    this.bgShimmer = this.add.rectangle(W / 2, H / 2, W, H, BIOMES[0].obsColor, 0)
-      .setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
+    // Shimmer overlay — pulses the current biome's neon color at low opacity.
+    // Use setAlpha(0) on the game object (not fillAlpha) so setFillStyle() on biome
+    // transitions doesn't accidentally reset fillAlpha to 1 and cause a full-screen flash.
+    this.bgShimmer = this.add.rectangle(W / 2, H / 2, W, H, BIOMES[0].obsColor)
+      .setAlpha(0).setDepth(3).setBlendMode(Phaser.BlendModes.ADD);
 
     this.gridTile = this.add.tileSprite(W / 2, H / 2, W, H, 'grid').setDepth(4).setAlpha(0.25);
     this._initAmbientBubbles();
@@ -141,7 +116,13 @@ export default class Game extends Phaser.Scene {
     this._buildContinueOverlay();
 
     // ── INPUT ────────────────────────────────────────────────────────────────
-    this.input.on('pointerdown', p => this._handlePointer(p, true));
+    this.input.on('pointerdown', p => {
+      this._handlePointer(p, true);
+      if (!this.gamePaused && !(p.x > W - 55 && p.y < 70 + SAFE_TOP)) {
+        this._sfx.woosh?.stop();
+        this._sfx.woosh?.play();
+      }
+    });
     this.input.on('pointerup',   () => { this.steerLeft = false; this.steerRight = false; });
     this.input.on('pointermove', p => { if (this.input.activePointer.isDown) this._handlePointer(p, true); });
 
@@ -160,6 +141,16 @@ export default class Game extends Phaser.Scene {
       loop: true,
     });
 
+    // All music Sound objects (current + any that are still fading out).
+    // The shutdown handler below stops them immediately if the scene is torn down before
+    // a fade-out tween completes — prevents game music leaking into the menu.
+    this._musicSounds = [];
+    this.events.once('shutdown', () => {
+      this._musicSounds.forEach(s => { try { s.stop(); s.destroy(); } catch (_) {} });
+      this._musicSounds = [];
+    });
+
+    this._initMusic();
     this.cameras.main.fadeIn(350);
   }
 
@@ -177,6 +168,7 @@ export default class Game extends Phaser.Scene {
 
   _tick() {
     if (this.dead || this.gamePaused) return;
+    this.gameTime += 120;
     this._updateEffectiveDifficulty();
     this.depth   += Math.round(this._eff.fallSpeed / 38);
     this.pressure = Math.max(this.pressure - PRESSURE_DECAY, 0);
@@ -187,7 +179,7 @@ export default class Game extends Phaser.Scene {
   // ── BIOME LOGIC ───────────────────────────────────────────────────────────
 
   _refreshBiome() {
-    const newIdx = getBiomeIndex(this.depth);
+    const newIdx = getBiomeIndexByTime(this.gameTime);
     if (newIdx !== this.biomeIdx) {
       this.biomeIdx = newIdx;
       this.spawnEvent.delay   = BIOMES[newIdx].spawnMs;
@@ -201,39 +193,115 @@ export default class Game extends Phaser.Scene {
       this._biomeTween = this.tweens.add({
         targets: this.biomeTxt, scaleX: 1.5, scaleY: 1.5, yoyo: true, duration: 200,
       });
-      const b = BIOMES[newIdx];
-      this.bg.setFillStyle(b.bg);
+      const b        = BIOMES[newIdx];
+      const nextSlot = 1 - this.bgSlot;
 
-      // Instant bg swap — no fade-in tween that would wash out the new biome
-      const bgKeys = ['bg_coral', 'bg_kelp', 'bg_midnight', 'bg_hadal'];
-      this.bgLayers[this.bgSlot].setTexture(bgKeys[newIdx]).setDisplaySize(W * 1.15, H * 1.15);
-      this.bgLayers[1 - this.bgSlot].setAlpha(0);
+      // Crossfade bg image layers — duration matches music crossfade (FADE_MS)
+      if (this._bgFadeInTween)  this._bgFadeInTween.stop();
+      if (this._bgFadeOutTween) this._bgFadeOutTween.stop();
+      this.bgLayers[nextSlot].setTexture(b.bgKey).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0);
+      this._bgFadeInTween  = this.tweens.add({ targets: this.bgLayers[nextSlot],    alpha: 0.38, duration: FADE_MS });
+      this._bgFadeOutTween = this.tweens.add({ targets: this.bgLayers[this.bgSlot], alpha: 0,    duration: FADE_MS });
+      this.bgSlot = nextSlot;
+
+      // Switch solid bg color at the midpoint so neither layer carries the wrong tint alone
+      this.time.delayedCall(FADE_MS / 2, () => this.bg.setFillStyle(b.bg));
+
       this.bgShimmer.setFillStyle(b.obsColor);
 
       this.biomeTxt.setText(`▼  ${b.name.toUpperCase()}  ▼`);
       this.biomeTxt.setColor('#' + b.obsColor.toString(16).padStart(6, '0'));
-      this.tweens.add({ targets: this.vigSprite, alpha: b.lightFade, duration: 1500 });
+      this.tweens.add({ targets: this.vigSprite, alpha: b.lightFade, duration: FADE_MS });
     }
   }
 
   // ── PROGRESSIVE DIFFICULTY ───────────────────────────────────────────────
 
   _updateEffectiveDifficulty() {
-    const bi   = this.biomeIdx;
-    const b    = BIOMES[bi];
-    const last = bi === BIOMES.length - 1;
-    // For the final biome, project an endpoint 12 000 m further with values 35% harder.
-    const endDepth  = last ? b.minDepth + 12000 : BIOMES[bi + 1].minDepth;
-    const tgt = last
-      ? { fallSpeed: b.fallSpeed * 1.35, spawnMs: b.spawnMs * 0.65, gapWidth: b.gapWidth * 0.82 }
-      : BIOMES[bi + 1];
-    const t = Math.min(1, Math.max(0, (this.depth - b.minDepth) / (endDepth - b.minDepth)));
+    const bi = this.biomeIdx;
+    const b  = BIOMES[bi];
+
+    // Last biome: fixed endurance difficulty — tweak BIOMES[last] values in main.js.
+    if (bi === BIOMES.length - 1) {
+      this._eff = { ...b };
+      return;
+    }
+
+    // How far through this biome we are (0 = just entered, 1 = at the next boundary).
+    let biomeStartMs = 0;
+    for (let i = 0; i < bi; i++) biomeStartMs += BIOMES[i].duration * 1000 * BIOME_DURATION_SCALE;
+    const t = Math.min(1, Math.max(0,
+      (this.gameTime - biomeStartMs) / (b.duration * 1000 * BIOME_DURATION_SCALE)
+    ));
+    const tgt = BIOMES[bi + 1];
     this._eff = {
       ...b,
       fallSpeed: b.fallSpeed + (tgt.fallSpeed - b.fallSpeed) * t,
       spawnMs:   b.spawnMs   + (tgt.spawnMs   - b.spawnMs)   * t,
       gapWidth:  b.gapWidth  + (tgt.gapWidth  - b.gapWidth)  * t,
     };
+  }
+
+  // ── MUSIC ─────────────────────────────────────────────────────────────────
+
+  _initMusic() {
+    // Flat ordered track list: [coralBGM, kelpBGM01, kelpBGM02, midnightBGM01, ...]
+    this._songList = BIOMES.flatMap(b => b.music);
+    // Index where Hadal songs start — used to loop back when Hadal exhausts its tracks.
+    this._hadalStartIdx = this._songList.length - BIOMES[BIOMES.length - 1].music.length;
+    this._currentMusic  = null;
+
+    // iOS (WKWebView) suspends the AudioContext until the first user gesture.
+    // Phaser emits 'unlocked' on its sound manager after that touch event.
+    // On desktop the context is never locked, so we start immediately.
+    if (this.sound.locked) {
+      this.sound.once('unlocked', () => this._playMusicTrack(0));
+    } else {
+      this._playMusicTrack(0);
+    }
+  }
+
+  _getMusicKey(trackIdx) {
+    if (trackIdx < this._songList.length) return this._songList[trackIdx];
+    // Past the end of the list: loop within Hadal tracks only.
+    const hadalLen = BIOMES[BIOMES.length - 1].music.length;
+    return this._songList[this._hadalStartIdx + ((trackIdx - this._hadalStartIdx) % hadalLen)];
+  }
+
+  _playMusicTrack(trackIdx) {
+    const SONG_MS  = 120000;  // each song is exactly 2 minutes
+
+    const key   = this._getMusicKey(trackIdx);
+    const music = this.sound.add(key, { volume: 0, loop: false });
+    this._musicSounds.push(music);
+    music.play();
+    this.tweens.add({ targets: music, volume: 0.7, duration: FADE_MS });
+
+    // Fade out and destroy the outgoing track.
+    const prev = this._currentMusic;
+    if (prev) {
+      this.tweens.add({
+        targets: prev, volume: 0, duration: FADE_MS,
+        onComplete: () => {
+          prev.stop(); prev.destroy();
+          this._musicSounds = this._musicSounds.filter(s => s !== prev);
+        },
+      });
+    }
+    this._currentMusic = music;
+
+    // Schedule next track so it starts FADE_MS before this one ends — 7 s of overlap.
+    this.time.delayedCall(SONG_MS - FADE_MS, () => this._playMusicTrack(trackIdx + 1));
+  }
+
+  _stopMusic() {
+    if (!this._currentMusic) return;
+    const m = this._currentMusic;
+    this._currentMusic = null;
+    this.tweens.add({
+      targets: m, volume: 0, duration: 400,
+      onComplete: () => { m.stop(); m.destroy(); },
+    });
   }
 
   // ── OBSTACLE SPAWNING ─────────────────────────────────────────────────────
@@ -257,8 +325,8 @@ export default class Game extends Phaser.Scene {
     const numGaps = Phaser.Math.Between(b.minGaps, b.maxGaps);
     const gaps    = this._generateGaps(numGaps, b.gapWidth, 0, W);
     const zones   = this._getObstacleZones(gaps, 0, W);
-    const skins   = WALL_SKINS[this.biomeIdx];
-    const bgPool  = WALL_BG_SKINS[this.biomeIdx];
+    const skins   = BIOMES[this.biomeIdx].fillSkins;
+    const bgPool  = BIOMES[this.biomeIdx].bgSkins;
 
     zones.forEach(zone => {
       const { x1, x2 } = zone;
@@ -370,12 +438,15 @@ export default class Game extends Phaser.Scene {
       count++;
     }
 
+    const MIN_SPRITE_W = W / 3;
     let cursor = x1;
     picked.forEach((skin, i) => {
-      // Apply the same scale factor to both axes → aspect ratio preserved, no distortion.
-      const dispW = natWs[i] * adj;
-      const dispH = wallH    * adj;
-      const sx    = cursor + dispW / 2;
+      // Minimum display width = W/3. If zone-fill adj would go smaller, scale this sprite up.
+      // Uniform scale on both axes — no distortion.
+      const useAdj = Math.max(adj, MIN_SPRITE_W / natWs[i]);
+      const dispW  = natWs[i] * useAdj;
+      const dispH  = wallH    * useAdj;
+      const sx     = cursor + dispW / 2;
 
       const img = this.add.image(sx, cy, skin.key)
         .setDisplaySize(dispW, dispH)
@@ -407,6 +478,9 @@ export default class Game extends Phaser.Scene {
     if (this.invincible || this.dead) return;
     this.invincible = true;
     this.pressure = Math.min(this.pressure + PRESSURE_HIT, 1.0);
+    if (this.cache.audio.has('hitSFX')) this.sound.play('hitSFX', { volume: 0.9 });
+    navigator.vibrate?.(40);  // Android / web fallback
+    Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
 
     this.cameras.main.shake(210, 0.018);
     this.hitFlash.setAlpha(0.5);
@@ -594,6 +668,7 @@ export default class Game extends Phaser.Scene {
   }
 
   _goToGameOver() {
+    this._stopMusic();
     this.contObjs.forEach(o => o.setVisible(false));
     this.cameras.main.fadeOut(300);
     this.time.delayedCall(300, () => {
@@ -611,16 +686,18 @@ export default class Game extends Phaser.Scene {
     this.gamePaused = true;
     this.steerLeft  = false;
     this.steerRight = false;
-    this.time.paused    = true;
+    this.time.paused = true;
     this.physics.pause();
+    this._currentMusic?.pause();
     this._updateCoinLabel();
     this.pauseObjs.forEach(o => o.setVisible(true));
   }
 
   _resume() {
     this.gamePaused = false;
-    this.time.paused    = false;
+    this.time.paused = false;
     this.physics.resume();
+    this._currentMusic?.resume();
     this.pauseObjs.forEach(o => o.setVisible(false));
   }
 
@@ -642,6 +719,8 @@ export default class Game extends Phaser.Scene {
     this.diver.setVelocityX(vx);
     this.diver.setVelocityY(0);
     this.diver.y = DIVER_Y;
+
+
 
     this.diver.x = Phaser.Math.Clamp(this.diver.x, DIVER_MARGIN, W - DIVER_MARGIN);
     this.diverGlow.x = this.diver.x;
@@ -718,12 +797,6 @@ export default class Game extends Phaser.Scene {
   }
 
   // ── HELPERS ───────────────────────────────────────────────────────────────
-
-  _fmt(secs) {
-    const m = Math.floor(secs / 60);
-    const s = Math.floor(secs % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
-  }
 
   _updateCoinLabel() {
     if (this.coinLbl) this.coinLbl.setText(`⬡ ${this.coins} coins`);
@@ -843,7 +916,7 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(36);
     pauseHit.on('pointerover',  () => pauseBg.setStrokeStyle(1.5, 0x00eeff, 1));
     pauseHit.on('pointerout',   () => pauseBg.setStrokeStyle(1.2, 0x00ccff, 0.6));
-    pauseHit.on('pointerdown',  () => this._pause());
+    pauseHit.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._pause(); });
 
     // Hit flash
     this.hitFlash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0).setDepth(50);
@@ -911,7 +984,7 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(d + 2);
     this.useCoinBtn.on('pointerover',  () => this.useCoinBtn.setStrokeStyle(2.5, this.coins > 0 ? 0xddaa00 : 0x333333, 1.0));
     this.useCoinBtn.on('pointerout',   () => this.useCoinBtn.setStrokeStyle(1.5, this.coins > 0 ? 0xddaa00 : 0x333333, 0.8));
-    this.useCoinBtn.on('pointerdown',  () => this._useCoins());
+    this.useCoinBtn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._useCoins(); });
 
     const buyLbl = this.add.text(W / 2, H * 0.755, 'Buy coins  •  4 for $0.99', {
       fontSize: '14px', fontFamily: 'Arial', color: '#2a3a44',
@@ -922,7 +995,13 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true });
     giveUp.on('pointerover',  () => giveUp.setColor('#4a6a7a'));
     giveUp.on('pointerout',   () => giveUp.setColor('#1e2e38'));
-    giveUp.on('pointerdown',  () => { this.contEvt?.remove(); this._goToGameOver(); });
+    giveUp.on('pointerdown',  () => {
+      this._sfx.button?.stop(); this._sfx.button?.play();
+      this.contEvt?.remove();
+      this._stopMusic();
+      this.cameras.main.fadeOut(250);
+      this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
+    });
 
     this.contObjs = [bg, title, this.contTxt, secLbl, this.useCoinBtn, this.useCoinTxt, buyLbl, giveUp, ...adBtns];
     this.contObjs.forEach(o => o.setVisible(false));
@@ -940,7 +1019,7 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(depth + 1);
     btn.on('pointerover',  () => btn.setStrokeStyle(2.5, strokeColor, 1.0));
     btn.on('pointerout',   () => btn.setStrokeStyle(1.5, strokeColor, 0.75));
-    btn.on('pointerdown',  callback);
+    btn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); callback(); });
     return [btn, txt];
   }
 }

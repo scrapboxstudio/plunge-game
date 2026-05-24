@@ -1,4 +1,4 @@
-import { W, H } from '../main.js';
+import { W, H, BIOMES } from '../main.js';
 
 export default class Boot extends Phaser.Scene {
   constructor() { super('Boot'); }
@@ -6,17 +6,18 @@ export default class Boot extends Phaser.Scene {
   preload() {
     this.load.image('diver',     'assets/fish.png');
     this.load.image('diverDead', 'assets/dead.png');
-    this.load.image('bg_coral',    'assets/coral.png');
-    this.load.image('bg_kelp',     'assets/kelp.png');
-    this.load.image('bg_midnight', 'assets/midnight.png');
-    this.load.image('bg_hadal',    'assets/hadal.png');
-    for (let i = 1; i <= 6; i++) {
-      const n = String(i).padStart(2, '0');
-      this.load.image(`coral${n}`,    `assets/coral${n}.png`);
-      this.load.image(`kelp${n}`,     `assets/kelp${n}.png`);
-      this.load.image(`midnight${n}`, `assets/midnight${n}.png`);
-      this.load.image(`hadal${n}`,    `assets/hadal${n}.png`);
-    }
+    this.load.audio('mainMenu',  'assets/mainMenu.mp3');
+    this.load.audio('buttonSFX', 'assets/buttonSFX.mp3');
+    this.load.audio('wooshSFX',  'assets/wooshSFX.wav');
+    this.load.audio('hitSFX',    'assets/hitSFX.wav');
+
+    // All biome assets are declared in main.js BIOMES — adding a new biome there
+    // automatically loads its background, skin sprites, and music tracks here.
+    BIOMES.forEach(b => {
+      this.load.image(b.bgKey, `assets/${b.bgKey.slice(3)}.png`);
+      [...b.bgSkins, ...b.fillSkins].forEach(s => this.load.image(s.key, `assets/${s.key}.png`));
+      b.music.forEach(key => this.load.audio(key, `assets/${key}.mp3`));
+    });
   }
 
   create() {

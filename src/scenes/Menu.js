@@ -17,8 +17,13 @@ const PACKAGES = [
 export default class Menu extends Phaser.Scene {
   constructor() { super('Menu'); }
 
+  init(data) {
+    this.skipAbyss = !!(data && data.skipAbyss);
+  }
+
   create() {
     this.storeOpen = false;
+    this.abyssOpen = !this.skipAbyss;  // false when returning from a game session
     this.bgFish    = [];
     this.floaters  = [];
 
@@ -56,10 +61,21 @@ export default class Menu extends Phaser.Scene {
 
     // ── INPUT ─────────────────────────────────────────────────────────────────
     this.input.on('pointerdown', (p) => {
+      if (this.abyssOpen) return;
       if (this.storeOpen) return;
-      if (p.y > H * 0.820) return; // coin store zone
+      if (p.y > H * 0.820) return;
       this._flashAndDive();
     });
+
+    this._menuMusic = null;
+    this.events.once('shutdown', () => { this._menuMusic?.stop(); this._menuMusic?.destroy(); });
+
+    // ── ENTER THE ABYSS SPLASH (first open only) ──────────────────────────────
+    if (this.skipAbyss) {
+      this._startMenuMusic();   // AudioContext already unlocked — came from an active game
+    } else {
+      this._buildAbyssPanel();  // music starts on panel dismiss
+    }
 
     this.cameras.main.fadeIn(400);
   }
@@ -188,7 +204,7 @@ export default class Menu extends Phaser.Scene {
 
     bg.on('pointerover',  () => { bg.setFillStyle(0x221100, 0.95); txt.setColor('#ffcc00'); });
     bg.on('pointerout',   () => { bg.setFillStyle(0x110800, 0.85); txt.setColor('#ddaa00'); });
-    bg.on('pointerdown',  () => this._openStore());
+    bg.on('pointerdown',  () => { this.cache.audio.has('buttonSFX') && this.sound.play('buttonSFX', { volume: 0.7 }); this._openStore(); });
   }
 
   // ── DECORATIVE ─────────────────────────────────────────────────────────────
@@ -288,9 +304,67 @@ export default class Menu extends Phaser.Scene {
     }
   }
 
+  // ── MUSIC ──────────────────────────────────────────────────────────────────
+
+  _startMenuMusic() {
+    if (this._menuMusic || !this.cache.audio.has('mainMenu')) return;
+    this._menuMusic = this.sound.add('mainMenu', { volume: 0.7, loop: true });
+    this._menuMusic.play();
+    if (this.sound.locked) this.sound.once('unlocked', () => {
+      if (!this._menuMusic?.isPlaying) this._menuMusic?.play();
+    });
+  }
+
+  // ── ENTER THE ABYSS SPLASH ────────────────────────────────────────────────
+
+  _buildAbyssPanel() {
+    const d = 20;
+    const objs = [];
+    const mk = o => { objs.push(o); return o; };
+
+    // Semi-transparent veil — menu background shows through
+    mk(this.add.rectangle(W / 2, H / 2, W, H, 0x000010).setAlpha(0.87).setDepth(d).setInteractive());
+
+    // Ghost diver silhouette
+    mk(this.add.image(W / 2, H * 0.42, 'diver')
+      .setAlpha(0.07).setScale(2.6).setDepth(d + 1)
+      .setBlendMode(Phaser.BlendModes.ADD));
+
+    mk(this.add.text(W / 2, H * 0.345, 'ENTER', {
+      fontSize: '40px', fontFamily: 'Arial Black',
+      color: '#0088bb', stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(d + 2));
+
+    mk(this.add.text(W / 2, H * 0.46, 'THE ABYSS', {
+      fontSize: '68px', fontFamily: 'Arial Black',
+      color: '#cc0077', stroke: '#0088bb', strokeThickness: 6,
+    }).setOrigin(0.5).setDepth(d + 2));
+
+    mk(this.add.rectangle(W / 2, H * 0.56, W * 0.62, 1.5, 0x0088bb).setAlpha(0.35).setDepth(d + 2));
+
+    const hint = mk(this.add.text(W / 2, H * 0.64, '▼  tap to descend  ▼', {
+      fontSize: '18px', fontFamily: 'Arial Black',
+      color: '#2a3a44', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(d + 2));
+    this.tweens.add({ targets: hint, alpha: 0.18, yoyo: true, repeat: -1, duration: 720 });
+
+    // Tap anywhere on the overlay to dismiss and start music.
+    // abyssOpen is cleared on the next frame so the scene-level pointerdown handler
+    // (which fires in the same event cycle) still sees it as true and doesn't start the game.
+    objs[0].once('pointerdown', () => {
+      this.time.delayedCall(10, () => { this.abyssOpen = false; });
+      this._startMenuMusic();
+      this.tweens.add({
+        targets: objs, alpha: 0, duration: 480,
+        onComplete: () => objs.forEach(o => o.destroy()),
+      });
+    });
+  }
+
   // ── INTERACTION ────────────────────────────────────────────────────────────
 
   _flashAndDive() {
+    this.sound.play('buttonSFX', { volume: 0.7 });
     this.input.off('pointerdown');
     this.letterObjs.forEach(t => t.setColor('#ffffff'));
     this.time.delayedCall(50, () => {
@@ -353,7 +427,7 @@ export default class Menu extends Phaser.Scene {
       card.on('pointerout',    () => card.setFillStyle(0x0a0010));
       buyBtn.on('pointerover', () => buyBtn.setFillStyle(0x440088));
       buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x220044));
-      buyBtn.on('pointerdown', () => this._purchase(pkg.coins));
+      buyBtn.on('pointerdown', () => { this.cache.audio.has('buttonSFX') && this.sound.play('buttonSFX', { volume: 0.7 }); this._purchase(pkg.coins); });
 
       this._pkgObjs.push(card, lbl, sub, buyBtn, buyTxt);
     });
@@ -364,7 +438,7 @@ export default class Menu extends Phaser.Scene {
       .setInteractive({ useHandCursor: true });
     closeBtn.on('pointerover', () => closeBtn.setColor('#6688aa'));
     closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44'));
-    closeBtn.on('pointerdown', () => this._closeStore());
+    closeBtn.on('pointerdown', () => { this.cache.audio.has('buttonSFX') && this.sound.play('buttonSFX', { volume: 0.7 }); this._closeStore(); });
 
     this._storeObjs = [dim, panel, title, this._coinBalTxt, simNote, closeBtn, ...this._pkgObjs];
   }
