@@ -3,30 +3,30 @@ import { W, H } from '../main.js';
 export default class Boot extends Phaser.Scene {
   constructor() { super('Boot'); }
 
+  preload() {
+    this.load.image('diver',     'assets/fish.png');
+    this.load.image('diverDead', 'assets/dead.png');
+    this.load.image('bg_coral',    'assets/coral.png');
+    this.load.image('bg_kelp',     'assets/kelp.png');
+    this.load.image('bg_midnight', 'assets/midnight.png');
+    this.load.image('bg_hadal',    'assets/hadal.png');
+    for (let i = 1; i <= 6; i++) {
+      const n = String(i).padStart(2, '0');
+      this.load.image(`coral${n}`,    `assets/coral${n}.png`);
+      this.load.image(`kelp${n}`,     `assets/kelp${n}.png`);
+      this.load.image(`midnight${n}`, `assets/midnight${n}.png`);
+      this.load.image(`hadal${n}`,    `assets/hadal${n}.png`);
+    }
+  }
+
   create() {
-    this._makeDiver();
     this._makeBubble();
     this._makeGlow();
     this._makeDot();
+    this._makeGrid();
+    this._makeStar();
     this._makeVignette();
     this.scene.start('Menu');
-  }
-
-  _makeDiver() {
-    // Diving mask silhouette — head + visor + tank
-    const g = this.make.graphics({ add: false });
-    // Head
-    g.fillStyle(0x2299dd); g.fillCircle(24, 21, 18);
-    // Mask frame
-    g.fillStyle(0x003355); g.fillRoundedRect(9, 15, 30, 14, 5);
-    // Visor shine
-    g.fillStyle(0x88deff, 0.55); g.fillRoundedRect(11, 16, 26, 11, 4);
-    // Tank connector
-    g.fillStyle(0x1166aa); g.fillRect(19, 35, 10, 8);
-    // Snorkel/regulator dot
-    g.fillStyle(0x001a33); g.fillCircle(37, 20, 4);
-    g.generateTexture('diver', 48, 48);
-    g.destroy();
   }
 
   _makeBubble() {
@@ -54,6 +54,36 @@ export default class Boot extends Phaser.Scene {
     g.fillStyle(0xffffff, 1);
     g.fillCircle(3, 3, 3);
     g.generateTexture('dot', 6, 6);
+    g.destroy();
+  }
+
+  _makeGrid() {
+    // Single grid cell — tiles seamlessly as a graph-paper overlay
+    const canvas = document.createElement('canvas');
+    const s = 22;
+    canvas.width = s; canvas.height = s;
+    const ctx = canvas.getContext('2d');
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.moveTo(s, 0); ctx.lineTo(s, s); // right edge
+    ctx.moveTo(0, s); ctx.lineTo(s, s); // bottom edge
+    ctx.stroke();
+    this.textures.addCanvas('grid', canvas);
+  }
+
+  _makeStar() {
+    // 4-point sparkle matching the reference art style
+    const g = this.make.graphics({ add: false });
+    g.lineStyle(1.2, 0xffffff, 1);
+    g.moveTo(4, 0); g.lineTo(4, 8);
+    g.moveTo(0, 4); g.lineTo(8, 4);
+    g.strokePath();
+    g.lineStyle(0.7, 0xffffff, 0.5);
+    g.moveTo(1.2, 1.2); g.lineTo(6.8, 6.8);
+    g.moveTo(6.8, 1.2); g.lineTo(1.2, 6.8);
+    g.strokePath();
+    g.generateTexture('star', 8, 8);
     g.destroy();
   }
 
