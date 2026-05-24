@@ -6,6 +6,7 @@ import {
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 
 const STORAGE_COINS = 'plunge_coins';
+const STORAGE_BEST  = 'plunge_best';
 
 const WALL_H    = 110;
 const FADE_MS   = 7000;  // biome crossfade — bg images, vignette, and music all use this
@@ -18,7 +19,11 @@ export default class Game extends Phaser.Scene {
   create() {
     // State
     this.depth      = 0;
-    this.gameTime   = 0;       // elapsed ms (excludes pause/death), drives biome + music
+    this.gameTime   = 0;
+    this._prevBest     = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+    this._newRecord    = false;
+    this._lastGapCenter = undefined;  // used to alternate gap sides and force movement
+    this._recentSkins   = {};         // biomeIdx → recently-used skin keys (avoids repeats)       // elapsed ms (excludes pause/death), drives biome + music
     this.pressure   = 0;       // 0.0 → 1.0 → death
     this.dead       = false;
     this.invincible = false;
@@ -171,9 +176,45 @@ export default class Game extends Phaser.Scene {
     this.gameTime += 120;
     this._updateEffectiveDifficulty();
     this.depth   += Math.round(this._eff.fallSpeed / 38);
+    if (!this._newRecord && this._prevBest > 0 && this.depth > this._prevBest) {
+      this._newRecord = true;
+      this._onNewRecord();
+    }
     this.pressure = Math.max(this.pressure - PRESSURE_DECAY, 0);
     this._refreshBiome();
     this.spawnEvent.delay = Math.round(this._eff.spawnMs);
+  }
+
+  // ── NEW RECORD ────────────────────────────────────────────────────────────
+
+  _onNewRecord() {
+    // Turn the depth counter gold for the rest of the run
+    this.depthTxt.setColor('#ddaa00').setStroke('#aa7700', 4);
+    this.tweens.add({
+      targets: this.depthTxt, scaleX: 1.6, scaleY: 1.6,
+      yoyo: true, duration: 260, ease: 'Power2Out',
+    });
+
+    // Badge that pops in then floats away
+    const ST    = SAFE_TOP;
+    const badge = this.add.text(W / 2, H * 0.32, '★  NEW RECORD  ★', {
+      fontSize: '24px', fontFamily: 'Arial Black',
+      color: '#ddaa00', stroke: '#000', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(38).setAlpha(0).setScale(0.5);
+
+    this.tweens.add({
+      targets: badge, alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 380, ease: 'Back.Out',
+      onComplete: () => {
+        this.time.delayedCall(1600, () => {
+          this.tweens.add({
+            targets: badge, alpha: 0, y: badge.y - 28,
+            duration: 500,
+            onComplete: () => badge.destroy(),
+          });
+        });
+      },
+    });
   }
 
   // ── BIOME LOGIC ───────────────────────────────────────────────────────────
@@ -359,6 +400,8 @@ export default class Game extends Phaser.Scene {
           .setDepth(6);
         img.setData('velY', speed);
         this.decorations.push({ obj: img, isDecor: true });
+        // Overlay fillSkins for variety — drawn in front of the landmark at depth 7
+        if (skins && skins.length) this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins, false);
       } else {
         // Interior zone or biome with no BG pool: fill with tiled smaller sprites
         this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins);
@@ -371,23 +414,41 @@ export default class Game extends Phaser.Scene {
     const minSeg = 24;
 
     if (numGaps === 1) {
-      const lo = xMin + margin;
-      const hi = Math.max(lo, xMax - margin - gapW);
-      const x1 = lo + Math.random() * (hi - lo);
+      const lo    = xMin + margin;
+      const hi    = Math.max(lo, xMax - margin - gapW);
+      const range = hi - lo;
+      const mid   = lo + range / 2;
+
+      // 80% of the time alternate to the opposite screen half from the last gap —
+      // forces the player to keep moving instead of camping one spot.
+      let x1;
+      if (this._lastGapCenter !== undefined && range > 40 && Math.random() < 0.8) {
+        x1 = this._lastGapCenter < mid
+          ? mid   + Math.random() * (hi - mid)   // last was left → go right
+          : lo    + Math.random() * (mid - lo);  // last was right → go left
+      } else {
+        x1 = lo + Math.random() * range;
+      }
+      x1 = Phaser.Math.Clamp(x1, lo, hi);
+      this._lastGapCenter = x1 + gapW / 2;
       return [{ x1, x2: x1 + gapW }];
     }
 
+    // For 2 gaps: require at least 50 px of positional freedom so layouts don't become
+    // near-deterministic on typical phone widths. Fall back to 1 gap if too tight.
+    const lo1      = xMin + margin;
+    const hi1      = xMax - margin - 2 * gapW - minSeg;
     const minTotal = 2 * margin + 2 * gapW + minSeg;
-    if ((xMax - xMin) < minTotal) return this._generateGaps(1, gapW, xMin, xMax);
+    if ((xMax - xMin) < minTotal || (hi1 - lo1) < 50) {
+      return this._generateGaps(1, gapW, xMin, xMax);
+    }
 
-    const lo1 = xMin + margin;
-    const hi1 = xMax - margin - 2 * gapW - minSeg;
-    const x1  = lo1 + Math.random() * Math.max(0, hi1 - lo1);
-
+    const x1  = lo1 + Math.random() * (hi1 - lo1);
     const lo2 = x1 + gapW + minSeg;
     const hi2 = Math.max(lo2, xMax - margin - gapW);
     const x2  = lo2 + Math.random() * (hi2 - lo2);
 
+    this._lastGapCenter = x1 + gapW / 2;
     return [
       { x1, x2: x1 + gapW },
       { x1: x2, x2: x2 + gapW },
@@ -405,15 +466,17 @@ export default class Game extends Phaser.Scene {
     return zones;
   }
 
-  _addSkinWallZone(x1, x2, cy, wallH, velY, skins) {
+  _addSkinWallZone(x1, x2, cy, wallH, velY, skins, addPhysics = true) {
     const zoneW = x2 - x1;
     if (zoneW <= 2) return;
 
-    const cx   = (x1 + x2) / 2;
-    const rect = this.add.rectangle(cx, cy, zoneW, wallH, 0x000000, 0);
-    this.physics.add.existing(rect, true);
-    this.walls.add(rect);
-    rect.setData('velY', velY);
+    const cx = (x1 + x2) / 2;
+    if (addPhysics) {
+      const rect = this.add.rectangle(cx, cy, zoneW, wallH, 0x000000, 0);
+      this.physics.add.existing(rect, true);
+      this.walls.add(rect);
+      rect.setData('velY', velY);
+    }
 
     // Sprites are pre-rotated in their asset files — no code rotation applied.
     // Natural width when uniformly scaled to height = wallH (preserves aspect ratio).
@@ -431,19 +494,16 @@ export default class Game extends Phaser.Scene {
     // If too few sprites, add more and re-sample.
     let picked, natWs, adj;
     for (let iter = 0; iter < 6; iter++) {
-      picked = Array.from({ length: count }, () => Phaser.Utils.Array.GetRandom(pool));
+      picked = Array.from({ length: count }, () => this._pickSkin(pool));
       natWs  = picked.map(natW);
       adj    = zoneW / natWs.reduce((a, b) => a + b, 0);
       if (adj <= 1.4) break;
       count++;
     }
 
-    const MIN_SPRITE_W = W / 3;
     let cursor = x1;
     picked.forEach((skin, i) => {
-      // Minimum display width = W/3. If zone-fill adj would go smaller, scale this sprite up.
-      // Uniform scale on both axes — no distortion.
-      const useAdj = Math.max(adj, MIN_SPRITE_W / natWs[i]);
+      const useAdj = adj;
       const dispW  = natWs[i] * useAdj;
       const dispH  = wallH    * useAdj;
       const sx     = cursor + dispW / 2;
@@ -452,12 +512,25 @@ export default class Game extends Phaser.Scene {
         .setDisplaySize(dispW, dispH)
         .setFlipX(Math.random() < 0.5)
         .setBlendMode(Phaser.BlendModes.ADD)
-        .setDepth(6);
+        .setDepth(addPhysics ? 6 : 7);
       img.setData('velY', velY);
       this.decorations.push({ obj: img, isDecor: true });
 
       cursor += dispW;
     });
+  }
+
+  // Pick a skin from pool, avoiding recently used ones (window = half the pool size).
+  // Ensures all skins rotate through before repeating — critical for coral's 25 sprites.
+  _pickSkin(pool) {
+    const key    = this.biomeIdx;
+    const recent = this._recentSkins[key] ?? (this._recentSkins[key] = []);
+    const window = Math.max(1, Math.floor(pool.length / 2));
+    const fresh  = pool.filter(sk => !recent.includes(sk.key));
+    const sk     = Phaser.Utils.Array.GetRandom(fresh.length > 0 ? fresh : pool);
+    recent.push(sk.key);
+    if (recent.length > window) recent.shift();
+    return sk;
   }
 
   _addGlowDot(velY) {
@@ -998,6 +1071,8 @@ export default class Game extends Phaser.Scene {
     giveUp.on('pointerdown',  () => {
       this._sfx.button?.stop(); this._sfx.button?.play();
       this.contEvt?.remove();
+      const prev = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+      if (this.depth > prev) localStorage.setItem(STORAGE_BEST, this.depth);
       this._stopMusic();
       this.cameras.main.fadeOut(250);
       this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
