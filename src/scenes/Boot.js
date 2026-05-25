@@ -10,6 +10,9 @@ export default class Boot extends Phaser.Scene {
     this.load.audio('buttonSFX', 'assets/buttonSFX.mp3');
     this.load.audio('wooshSFX',  'assets/wooshSFX.wav');
     this.load.audio('hitSFX',    'assets/hitSFX.wav');
+    this.load.audio('coinSFX',       'assets/coinSFX.wav');
+    this.load.audio('invincibleSFX', 'assets/invincibleSFX.wav');
+    this.load.audio('1upSFX',        'assets/1upSFX.wav');
 
     // All biome assets are declared in main.js BIOMES — adding a new biome there
     // automatically loads its background, skin sprites, and music tracks here.
@@ -27,6 +30,8 @@ export default class Boot extends Phaser.Scene {
     this._makeGrid();
     this._makeStar();
     this._makeVignette();
+    this._makeCoin();
+    this._makeShell();
     this.scene.start('Menu');
   }
 
@@ -85,6 +90,42 @@ export default class Boot extends Phaser.Scene {
     g.moveTo(6.8, 1.2); g.lineTo(1.2, 6.8);
     g.strokePath();
     g.generateTexture('star', 8, 8);
+    g.destroy();
+  }
+
+  _makeCoin() {
+    const g = this.make.graphics({ add: false });
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(10, 10, 10);
+    g.fillStyle(0x000000, 0.25);
+    g.fillCircle(10, 10, 5);
+    g.fillStyle(0xffffff, 0.9);
+    g.fillCircle(10, 10, 3);
+    g.generateTexture('coinTex', 20, 20);
+    g.destroy();
+  }
+
+  _makeShell() {
+    const g = this.make.graphics({ add: false });
+    const cx = 14, cy = 14, r = 12;
+    // Outer glow halo
+    g.fillStyle(0xffffff, 0.25);
+    g.fillCircle(cx, cy, r + 2);
+    // Main shell body
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(cx, cy, r);
+    // Ridge lines radiating from centre
+    g.lineStyle(1.8, 0x000000, 0.18);
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2;
+      g.lineBetween(cx, cy, cx + Math.cos(a) * r, cy + Math.sin(a) * r);
+    }
+    // Dark inner ring + bright nucleus
+    g.fillStyle(0x000000, 0.20);
+    g.fillCircle(cx, cy, 5);
+    g.fillStyle(0xffffff, 1);
+    g.fillCircle(cx, cy, 3);
+    g.generateTexture('shellTex', 28, 28);
     g.destroy();
   }
 

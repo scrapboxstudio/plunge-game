@@ -38,6 +38,20 @@ export default class Game extends Phaser.Scene {
 
     this.decorations = [];
 
+    // Shell (invincibility) state
+    this._shellsThisBiome     = 0;   // shells spawned in current biome/batch (max 1)
+    this._nextShellIn         = this._shellSpawnDelay();
+    this._hadalShellBatchDepth = 0;
+    this._shellInvincible     = false;
+    this._invincibleSFX       = null;
+
+    // Coin state
+    this._coinsThisBiome      = 0;   // collected in current biome/batch
+    this._nextCoinIn          = this._coinSpawnInterval();
+    this._hadalCoinBatchDepth = 0;   // depth at start of current Hadal coin batch
+    this._coinsCollectedTotal = 0;   // total collected this run (for respawn threshold)
+    this._lastGaps            = null;
+
     // Pre-create one reusable instance per SFX — safe: returns null if file wasn't loaded.
     // All play calls use optional chaining so a missing file never crashes the game.
     const _snd = (key, vol) =>
@@ -108,6 +122,18 @@ export default class Game extends Phaser.Scene {
     this.walls = this.physics.add.staticGroup();
     this.physics.add.overlap(this.diver, this.walls, () => this.onHit(), null, this);
 
+    // ── COINS ─────────────────────────────────────────────────────────────────
+    this.coinPickups = this.physics.add.staticGroup();
+    this.physics.add.overlap(this.diver, this.coinPickups, (d, coin) => this._collectCoin(coin), null, this);
+
+    // ── SHELLS ────────────────────────────────────────────────────────────────
+    this.shellPickups = this.physics.add.staticGroup();
+    this.physics.add.overlap(this.diver, this.shellPickups, (d, shell) => this._collectShell(shell), null, this);
+
+    // Persistent aura rendered during invincibility — hidden until shell collected
+    this.shellAura = this.add.circle(W / 2, DIVER_Y, 54, 0xbbddff, 0)
+      .setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+
     // ── BUBBLE TRAIL ─────────────────────────────────────────────────────────
     this.trail      = [];
     this.trailTimer = 0;
@@ -153,6 +179,7 @@ export default class Game extends Phaser.Scene {
     this.events.once('shutdown', () => {
       this._musicSounds.forEach(s => { try { s.stop(); s.destroy(); } catch (_) {} });
       this._musicSounds = [];
+      try { this._invincibleSFX?.stop(); this._invincibleSFX?.destroy(); } catch (_) {}
     });
 
     this._initMusic();
@@ -183,6 +210,19 @@ export default class Game extends Phaser.Scene {
     this.pressure = Math.max(this.pressure - PRESSURE_DECAY, 0);
     this._refreshBiome();
     this.spawnEvent.delay = Math.round(this._eff.spawnMs);
+
+    // Hadal: new coin batch every 5000m
+    if (this.biomeIdx === BIOMES.length - 1 && this.depth - this._hadalCoinBatchDepth >= 5000) {
+      this._coinsThisBiome      = 0;
+      this._hadalCoinBatchDepth = this.depth;
+      this._nextCoinIn          = this._coinSpawnInterval();
+    }
+    // Hadal: new shell every ~5000m (independent of coin batch)
+    if (this.biomeIdx === BIOMES.length - 1 && this.depth - this._hadalShellBatchDepth >= 5000) {
+      this._shellsThisBiome      = 0;
+      this._hadalShellBatchDepth = this.depth;
+      this._nextShellIn          = this._shellSpawnDelay();
+    }
   }
 
   // ── NEW RECORD ────────────────────────────────────────────────────────────
@@ -225,6 +265,16 @@ export default class Game extends Phaser.Scene {
       this.biomeIdx = newIdx;
       this.spawnEvent.delay   = BIOMES[newIdx].spawnMs;
       this.spawnEvent.elapsed = 0;
+
+      // Reset coin + shell batches for the new biome
+      this._coinsThisBiome  = 0;
+      this._nextCoinIn      = this._coinSpawnInterval();
+      this._shellsThisBiome = 0;
+      this._nextShellIn     = this._shellSpawnDelay();
+      if (newIdx === BIOMES.length - 1) {
+        this._hadalCoinBatchDepth  = this.depth;
+        this._hadalShellBatchDepth = this.depth;
+      }
 
       const newVelY = -BIOMES[newIdx].fallSpeed;
       this.walls.getChildren().forEach(w => w.setData('velY', newVelY));
@@ -353,6 +403,8 @@ export default class Game extends Phaser.Scene {
     const speed  = -this._eff.fallSpeed;
 
     this._spawnWallRow(this._eff, spawnY, speed);
+    this._maybeSpawnCoin(spawnY, speed);
+    this._maybeSpawnShell(spawnY, speed);
 
     if (this.biomeIdx >= 2) {
       const count = this.biomeIdx === 3 ? 6 : 3;
@@ -365,6 +417,7 @@ export default class Game extends Phaser.Scene {
   _spawnWallRow(b, spawnY, speed) {
     const numGaps = Phaser.Math.Between(b.minGaps, b.maxGaps);
     const gaps    = this._generateGaps(numGaps, b.gapWidth, 0, W);
+    this._lastGaps = gaps;
     const zones   = this._getObstacleZones(gaps, 0, W);
     const skins   = BIOMES[this.biomeIdx].fillSkins;
     const bgPool  = BIOMES[this.biomeIdx].bgSkins;
@@ -478,9 +531,8 @@ export default class Game extends Phaser.Scene {
       rect.setData('velY', velY);
     }
 
-    // Sprites are pre-rotated in their asset files — no code rotation applied.
-    // Natural width when uniformly scaled to height = wallH (preserves aspect ratio).
-    const natW = sk => sk.pngW * (wallH / sk.pngH);
+    // Natural width at wall height, with optional per-sprite scale boost for small sprites.
+    const natW = sk => sk.pngW * (wallH / sk.pngH) * (sk.scale || 1);
 
     // Exclude skins whose natural width is more than 2× the zone — those would scale
     // down below 50% height and look tiny. Fall back to full list if all are too wide.
@@ -533,6 +585,227 @@ export default class Game extends Phaser.Scene {
     return sk;
   }
 
+  // ── COIN SPAWNING ──────────────────────────────────────────────────────────
+
+  _coinSpawnInterval() {
+    // Ranges capped so 20 × maxInterval ≤ total rows in the biome,
+    // guaranteeing all 20 coins always fit within the biome duration.
+    // Coral:     97 rows → max 4  (4×20=80 ≤ 97)
+    // Kelp:     194 rows → max 9  (9×20=180 ≤ 194)
+    // Midnight: 329 rows → max 16 (16×20=320 ≤ 329)
+    switch (this.biomeIdx) {
+      case 0:  return Phaser.Math.Between(3,  4);   // Coral
+      case 1:  return Phaser.Math.Between(7,  9);   // Kelp
+      case 2:  return Phaser.Math.Between(12, 16);  // Midnight
+      default: return Phaser.Math.Between(2,  5);   // Hadal (batch-based)
+    }
+  }
+
+  _maybeSpawnCoin(spawnY, speed) {
+    if (!this._lastGaps?.length) return;
+    if (this._coinsThisBiome >= 20) return;
+    if (--this._nextCoinIn > 0) return;
+
+    const gap    = Phaser.Utils.Array.GetRandom(this._lastGaps);
+    const margin = 22;
+    const range  = gap.x2 - gap.x1 - margin * 2;
+    if (range <= 0) return;
+
+    const x = gap.x1 + margin + Math.random() * range;
+    this._spawnCoin(x, spawnY, speed);
+    this._coinsThisBiome++;
+    this._nextCoinIn = this._coinSpawnInterval();
+  }
+
+  _spawnCoin(x, y, speed) {
+    const color = BIOMES[this.biomeIdx].obsColor;
+    const coin  = this.add.image(x, y, 'coinTex')
+      .setTint(color)
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(8)
+      .setScale(1.1);
+    this.physics.add.existing(coin, true);
+    this.coinPickups.add(coin);
+    coin.setData('velY', speed);
+
+    this.tweens.add({
+      targets: coin, scaleX: 1.5, scaleY: 1.5,
+      yoyo: true, repeat: -1,
+      duration: Phaser.Math.Between(480, 720),
+      ease: 'Sine.InOut',
+    });
+  }
+
+  _collectCoin(coin) {
+    if (!coin.active) return;
+    const cx = coin.x, cy = coin.y;
+    this.tweens.killTweensOf(coin);
+    coin.destroy();
+
+    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.75 });
+
+    this._coinsCollectedTotal++;
+    this._updateCoinProgress();
+
+    const color = '#' + BIOMES[this.biomeIdx].obsColor.toString(16).padStart(6, '0');
+    const txt = this.add.text(cx, cy, '+1', {
+      fontSize: '18px', fontFamily: 'Arial Black',
+      color, stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(20);
+    this.tweens.add({
+      targets: txt, y: cy - 55, alpha: 0, duration: 700,
+      onComplete: () => txt.destroy(),
+    });
+
+    // Every 20 coins earns 1 respawn
+    if (this._coinsCollectedTotal % 20 === 0) {
+      this.coins++;
+      localStorage.setItem(STORAGE_COINS, this.coins);
+      if (this.cache.audio.has('1upSFX')) this.sound.play('1upSFX', { volume: 0.9 });
+      this._showRespawnEarned();
+    }
+  }
+
+  _showRespawnEarned() {
+    const banner = this.add.text(W / 2, H * 0.44, '+1 RESPAWN EARNED', {
+      fontSize: '22px', fontFamily: 'Arial Black',
+      color: '#ddaa00', stroke: '#000', strokeThickness: 4,
+    }).setOrigin(0.5).setDepth(40).setAlpha(0).setScale(0.6);
+    this.tweens.add({
+      targets: banner, alpha: 1, scaleX: 1, scaleY: 1,
+      duration: 300, ease: 'Back.Out',
+      onComplete: () => {
+        this.time.delayedCall(1400, () => {
+          this.tweens.add({
+            targets: banner, alpha: 0, y: banner.y - 28, duration: 480,
+            onComplete: () => banner.destroy(),
+          });
+        });
+      },
+    });
+  }
+
+  // ── SHELL (INVINCIBILITY) ─────────────────────────────────────────────────
+
+  _shellSpawnDelay() {
+    // Shell appears in the middle third of each biome so it's reachable but earned.
+    // Coral:    97 rows  → Between(35, 60)
+    // Kelp:    194 rows  → Between(70, 120)
+    // Midnight: 329 rows → Between(120, 180)
+    // Hadal:   batch     → Between(40, 80) rows after batch reset
+    switch (this.biomeIdx) {
+      case 0:  return Phaser.Math.Between(35,  60);
+      case 1:  return Phaser.Math.Between(70,  120);
+      case 2:  return Phaser.Math.Between(120, 180);
+      default: return Phaser.Math.Between(40,  80);
+    }
+  }
+
+  _maybeSpawnShell(spawnY, speed) {
+    if (this._shellsThisBiome >= 1) return;
+    if (--this._nextShellIn > 0) return;
+
+    // Shell can land anywhere — including inside obstacle zones.
+    // Collecting it through a wall costs one pressure hit but grants 8 s of phasing.
+    const x = DIVER_MARGIN + Math.random() * (W - DIVER_MARGIN * 2);
+    this._spawnShell(x, spawnY, speed);
+    this._shellsThisBiome++;
+  }
+
+  _spawnShell(x, y, speed) {
+    const shell = this.add.image(x, y, 'shellTex')
+      .setTint(0xbbddff)          // platinum blue-white
+      .setBlendMode(Phaser.BlendModes.ADD)
+      .setDepth(8)
+      .setScale(1.3);
+    this.physics.add.existing(shell, true);
+    this.shellPickups.add(shell);
+    shell.setData('velY', speed);
+
+    // Slow spin + pulse to stand out from coins
+    this.tweens.add({ targets: shell, angle: 360, duration: 2800, repeat: -1, ease: 'Linear' });
+    this.tweens.add({
+      targets: shell, scaleX: 1.7, scaleY: 1.7,
+      yoyo: true, repeat: -1, duration: 620, ease: 'Sine.InOut',
+    });
+  }
+
+  _collectShell(shell) {
+    if (!shell.active) return;
+    this.tweens.killTweensOf(shell);
+    shell.destroy();
+
+    // Pickup chime, then loop the invincibility track
+    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.9 });
+    if (this.cache.audio.has('invincibleSFX')) {
+      this._invincibleSFX = this.sound.add('invincibleSFX', { volume: 0.8, loop: true });
+      this._invincibleSFX.play();
+    }
+
+    this._shellInvincible = true;
+    this.invincible       = true;
+
+    // Camera flash + banner
+    this.cameras.main.flash(200, 180, 220, 255, false);
+    const banner = this.add.text(W / 2, H * 0.38, 'PLATINUM SHELL!', {
+      fontSize: '26px', fontFamily: 'Arial Black',
+      color: '#bbddff', stroke: '#000', strokeThickness: 5,
+    }).setOrigin(0.5).setDepth(40).setAlpha(0).setScale(0.5);
+    this.tweens.add({
+      targets: banner, alpha: 1, scaleX: 1, scaleY: 1, duration: 320, ease: 'Back.Out',
+      onComplete: () => this.time.delayedCall(1200, () => {
+        this.tweens.add({ targets: banner, alpha: 0, y: banner.y - 24, duration: 400, onComplete: () => banner.destroy() });
+      }),
+    });
+
+    // Aura pulse
+    this.shellAura.setAlpha(0.40).setScale(1);
+    this._shellAuraTween = this.tweens.add({
+      targets: this.shellAura, alpha: 0.12, scaleX: 1.4, scaleY: 1.4,
+      yoyo: true, repeat: -1, duration: 220, ease: 'Sine.InOut',
+    });
+
+    // Diver sprite flicker — rapid alpha blink for the full 5 s
+    this._shellFlashTween = this.tweens.add({
+      targets: this.diver, alpha: 0.15,
+      yoyo: true, repeat: -1, duration: 120, ease: 'Linear',
+    });
+
+    // 1 second before expiry: speed up aura flash as warning
+    this.time.delayedCall(7000, () => {
+      if (!this._shellInvincible) return;
+      this._shellAuraTween?.stop();
+      this._shellAuraTween = this.tweens.add({
+        targets: this.shellAura, alpha: 0.04, scaleX: 1.6, scaleY: 1.6,
+        yoyo: true, repeat: -1, duration: 80, ease: 'Sine.InOut',
+      });
+    });
+
+    this.time.delayedCall(8000, () => this._endShellInvincible());
+  }
+
+  _endShellInvincible() {
+    this._shellInvincible = false;
+    this.invincible       = false;
+    this._invincibleSFX?.stop();
+    this._invincibleSFX?.destroy();
+    this._invincibleSFX = null;
+    this._shellAuraTween?.stop();
+    this._shellAuraTween = null;
+    this.shellAura.setAlpha(0).setScale(1);
+    this._shellFlashTween?.stop();
+    this._shellFlashTween = null;
+    this.diver.setAlpha(1);
+  }
+
+  _updateCoinProgress() {
+    if (!this.coinProgressTxt) return;
+    const n = this._coinsCollectedTotal % 20;
+    this.coinProgressTxt
+      .setText(`⬡  ${n} / 20`)
+      .setColor(n > 0 ? '#ddaa00' : '#554400');
+  }
+
   _addGlowDot(velY) {
     if (this.decorations.length > 150) return;
     const gd = this.add.image(
@@ -579,7 +852,7 @@ export default class Game extends Phaser.Scene {
       },
     });
 
-    this.time.delayedCall(850, () => { this.invincible = false; });
+    this.time.delayedCall(850, () => { if (!this._shellInvincible) this.invincible = false; });
 
     if (this.pressure >= 1.0) this.die();
   }
@@ -663,8 +936,11 @@ export default class Game extends Phaser.Scene {
     this.diver.y    = DIVER_Y;
     this.diver.alpha = 1;
 
-    // Clear all walls + decorations so the player can't respawn inside a barrier
+    // Clear all walls, coins, shells + decorations so the player can't respawn inside a barrier
     this.walls.getChildren().slice().forEach(w => w.destroy());
+    this.coinPickups.getChildren().slice().forEach(c => c.destroy());
+    this.shellPickups.getChildren().slice().forEach(s => s.destroy());
+    if (this._shellInvincible) this._endShellInvincible();
     this.decorations.forEach(e => { if (e.obj?.active) e.obj.destroy(); });
     this.decorations = [];
     this.trail.forEach(e => e.img?.destroy());
@@ -819,7 +1095,15 @@ export default class Game extends Phaser.Scene {
 
     // ── SCROLL OBSTACLES + DECORATIONS ────────────────────────────
     this._scrollGroup(this.walls, dt);
+    this._scrollGroup(this.coinPickups, dt);
+    this._scrollGroup(this.shellPickups, dt);
     this._scrollDecorations(dt);
+
+    // ── SHELL AURA ────────────────────────────────────────────────
+    if (this._shellInvincible) {
+      this.shellAura.x = this.diver.x;
+      this.shellAura.y = this.diver.y;
+    }
 
     // ── BUBBLE TRAIL ──────────────────────────────────────────────
     this.trailTimer += delta;
@@ -966,6 +1250,16 @@ export default class Game extends Phaser.Scene {
       fontSize: '8px', fontFamily: 'Arial', color: '#ff0088',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(31);
+
+    // Top-left coin progress — how many collected toward next respawn
+    this.coinProgressTxt = this.add.text(14, 49 + ST, '⬡  0 / 20', {
+      fontSize: '15px', fontFamily: 'Arial Black',
+      color: '#554400', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0, 0.5).setDepth(30);
+    this.add.text(14, 66 + ST, '= +1 RESPAWN', {
+      fontSize: '8px', fontFamily: 'Arial Black',
+      color: '#223344', stroke: '#000', strokeThickness: 1,
+    }).setOrigin(0, 0.5).setDepth(30);
 
     // Depth counter — electric cyan stroke
     this.depthTxt = this.add.text(W / 2, 52 + ST, '0m', {
