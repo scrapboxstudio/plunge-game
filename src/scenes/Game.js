@@ -4,9 +4,33 @@ import {
   PRESSURE_DECAY, PRESSURE_HIT,
 } from '../main.js';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import {
+  SKINS, TRAILS, OBJ_SKINS, BG_SKINS, SKIN_TINTS,
+  STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
+  STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
+  STORAGE_ACTIVE_OBJ_SKIN, STORAGE_OWNED_OBJ_SKINS,
+  STORAGE_ACTIVE_BG, STORAGE_OWNED_BGS,
+} from '../config/cosmetics.js';
 
-const STORAGE_COINS = 'plunge_coins';
-const STORAGE_BEST  = 'plunge_best';
+const STORAGE_COINS      = 'plunge_coins';
+const STORAGE_BEST       = 'plunge_best';
+const STORAGE_LIVES      = 'plunge_lives';
+const STORAGE_VOL_MUSIC  = 'plunge_vol_music';
+const STORAGE_VOL_SFX    = 'plunge_vol_sfx';
+const STORAGE_MUTE_MUSIC = 'plunge_mute_music';
+const STORAGE_MUTE_SFX   = 'plunge_mute_sfx';
+const STORAGE_TRAIL      = 'plunge_particle_trail';
+
+function _readVol(key, def) {
+  const v = parseFloat(localStorage.getItem(key));
+  return (isNaN(v) || v < 0 || v > 1) ? def : v;
+}
+function musicVol() {
+  return localStorage.getItem(STORAGE_MUTE_MUSIC) === '1' ? 0 : _readVol(STORAGE_VOL_MUSIC, 0.7);
+}
+function sfxVol() {
+  return localStorage.getItem(STORAGE_MUTE_SFX) === '1' ? 0 : _readVol(STORAGE_VOL_SFX, 0.7);
+}
 
 const WALL_H    = 110;
 const FADE_MS   = 7000;  // biome crossfade — bg images, vignette, and music all use this
@@ -30,7 +54,13 @@ export default class Game extends Phaser.Scene {
     this.biomeIdx   = 0;
     this._eff       = { ...BIOMES[0] };  // interpolated difficulty values, updated each tick
     this.gamePaused = false;
-    this.coins      = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    this.coins        = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    this.lives        = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
+    this._trailEnabled  = localStorage.getItem(STORAGE_TRAIL) !== '0';
+    this._activeObjSkin = localStorage.getItem(STORAGE_ACTIVE_OBJ_SKIN) || 'default';
+    this._activeBgSkin  = localStorage.getItem(STORAGE_ACTIVE_BG)       || 'default';
+    this._objSkinTint   = OBJ_SKINS.find(s => s.key === this._activeObjSkin)?.tint ?? 0xffffff;
+    this._bgSkinTint    = BG_SKINS.find(s => s.key === this._activeBgSkin)?.tint  ?? 0xffffff;
 
     // Input flags
     this.steerLeft  = false;
@@ -45,17 +75,18 @@ export default class Game extends Phaser.Scene {
     this._shellInvincible     = false;
     this._invincibleSFX       = null;
 
-    // Coin state
-    this._coinsThisBiome      = 0;   // collected in current biome/batch
-    this._nextCoinIn          = this._coinSpawnInterval();
-    this._hadalCoinBatchDepth = 0;   // depth at start of current Hadal coin batch
-    this._coinsCollectedTotal = 0;   // total collected this run (for respawn threshold)
+    // Coin state — depth-based batches: 30 coins per 5000m, infinite
+    this._coinsThisBatch      = 0;   // coins spawned in the current 5000m batch
+    this._coinBatchStartDepth = 0;   // depth at which the current batch began
+    this._nextCoinDepth       = 100; // depth threshold before the next coin may spawn
+    this._coinsCollectedTotal = 0;   // total collected this run
     this._lastGaps            = null;
 
     // Pre-create one reusable instance per SFX — safe: returns null if file wasn't loaded.
     // All play calls use optional chaining so a missing file never crashes the game.
+    const sv = sfxVol();
     const _snd = (key, vol) =>
-      this.cache.audio.has(key) ? this.sound.add(key, { volume: vol }) : null;
+      this.cache.audio.has(key) ? this.sound.add(key, { volume: vol * sv }) : null;
     this._sfx = {
       button: _snd('buttonSFX', 0.7),
       woosh:  _snd('wooshSFX',  1.0),
@@ -68,7 +99,7 @@ export default class Game extends Phaser.Scene {
 
     // Two bg image slots — slot 0 is active, slot 1 kept at alpha 0 (unused until swap)
     this.bgLayers = [
-      this.add.image(W / 2, H / 2, 'bg_coral').setDepth(1).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0.38),
+      this.add.image(W / 2, H / 2, 'bg_coral').setDepth(1).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0.38).setTint(this._bgSkinTint),
       this.add.image(W / 2, H / 2, 'bg_coral').setDepth(2).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0),
     ];
     this.bgSlot = 0;
@@ -103,7 +134,7 @@ export default class Game extends Phaser.Scene {
       yoyo: true, repeat: -1, duration: 860, ease: 'Sine.InOut',
     });
 
-    this.diverGlow = this.add.circle(W / 2, DIVER_Y, 38, 0x00eeff, 0.22)
+    this.diverGlow = this.add.circle(W / 2, DIVER_Y, 38, SKIN_TINTS[this._activeSkin] ?? 0x00eeff, 0.22)
       .setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
       targets: this.diverGlow,
@@ -117,6 +148,14 @@ export default class Game extends Phaser.Scene {
       .setDisplaySize(88, 88)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setVisible(false);
+
+    // Apply active skin tint to both diver sprites
+    // SPRITE SWAP POINT — replace setTint() with setTexture(spriteKey) when real sprites are ready
+    this._activeSkin  = localStorage.getItem(STORAGE_ACTIVE_SKIN)  || 'default';
+    this._activeTrail = localStorage.getItem(STORAGE_ACTIVE_TRAIL) || 'default';
+    const _skinTint = SKIN_TINTS[this._activeSkin] ?? 0xffffff;
+    this.diver.setTint(_skinTint);
+    this.diverDead.setTint(_skinTint);
 
     // ── WALLS ────────────────────────────────────────────────────────────────
     this.walls = this.physics.add.staticGroup();
@@ -211,11 +250,11 @@ export default class Game extends Phaser.Scene {
     this._refreshBiome();
     this.spawnEvent.delay = Math.round(this._eff.spawnMs);
 
-    // Hadal: new coin batch every 5000m
-    if (this.biomeIdx === BIOMES.length - 1 && this.depth - this._hadalCoinBatchDepth >= 5000) {
-      this._coinsThisBiome      = 0;
-      this._hadalCoinBatchDepth = this.depth;
-      this._nextCoinIn          = this._coinSpawnInterval();
+    // New coin batch every 5000m — infinite, applies across all biomes
+    if (this.depth - this._coinBatchStartDepth >= 5000) {
+      this._coinsThisBatch      = 0;
+      this._coinBatchStartDepth = this.depth;
+      this._nextCoinDepth       = this.depth + Phaser.Math.Between(50, 120);
     }
     // Hadal: new shell every ~5000m (independent of coin batch)
     if (this.biomeIdx === BIOMES.length - 1 && this.depth - this._hadalShellBatchDepth >= 5000) {
@@ -266,13 +305,10 @@ export default class Game extends Phaser.Scene {
       this.spawnEvent.delay   = BIOMES[newIdx].spawnMs;
       this.spawnEvent.elapsed = 0;
 
-      // Reset coin + shell batches for the new biome
-      this._coinsThisBiome  = 0;
-      this._nextCoinIn      = this._coinSpawnInterval();
+      // Reset shell batch for the new biome; coin batches are depth-based and continue uninterrupted
       this._shellsThisBiome = 0;
       this._nextShellIn     = this._shellSpawnDelay();
       if (newIdx === BIOMES.length - 1) {
-        this._hadalCoinBatchDepth  = this.depth;
         this._hadalShellBatchDepth = this.depth;
       }
 
@@ -290,7 +326,7 @@ export default class Game extends Phaser.Scene {
       // Crossfade bg image layers — duration matches music crossfade (FADE_MS)
       if (this._bgFadeInTween)  this._bgFadeInTween.stop();
       if (this._bgFadeOutTween) this._bgFadeOutTween.stop();
-      this.bgLayers[nextSlot].setTexture(b.bgKey).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0);
+      this.bgLayers[nextSlot].setTexture(b.bgKey).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0).setTint(this._bgSkinTint);
       this._bgFadeInTween  = this.tweens.add({ targets: this.bgLayers[nextSlot],    alpha: 0.38, duration: FADE_MS });
       this._bgFadeOutTween = this.tweens.add({ targets: this.bgLayers[this.bgSlot], alpha: 0,    duration: FADE_MS });
       this.bgSlot = nextSlot;
@@ -366,7 +402,7 @@ export default class Game extends Phaser.Scene {
     const music = this.sound.add(key, { volume: 0, loop: false });
     this._musicSounds.push(music);
     music.play();
-    this.tweens.add({ targets: music, volume: 0.7, duration: FADE_MS });
+    this.tweens.add({ targets: music, volume: musicVol(), duration: FADE_MS });
 
     // Fade out and destroy the outgoing track.
     const prev = this._currentMusic;
@@ -451,7 +487,7 @@ export default class Game extends Phaser.Scene {
           .setFlipX(Math.random() < 0.5)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(6);
-        img.setData('velY', speed);
+        img.setData('velY', speed).setTint(this._objSkinTint);
         this.decorations.push({ obj: img, isDecor: true });
         // Overlay fillSkins for variety — drawn in front of the landmark at depth 7
         if (skins && skins.length) this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins, false);
@@ -565,7 +601,7 @@ export default class Game extends Phaser.Scene {
         .setFlipX(Math.random() < 0.5)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDepth(addPhysics ? 6 : 7);
-      img.setData('velY', velY);
+      img.setData('velY', velY).setTint(this._objSkinTint);
       this.decorations.push({ obj: img, isDecor: true });
 
       cursor += dispW;
@@ -587,24 +623,10 @@ export default class Game extends Phaser.Scene {
 
   // ── COIN SPAWNING ──────────────────────────────────────────────────────────
 
-  _coinSpawnInterval() {
-    // Ranges capped so 20 × maxInterval ≤ total rows in the biome,
-    // guaranteeing all 20 coins always fit within the biome duration.
-    // Coral:     97 rows → max 4  (4×20=80 ≤ 97)
-    // Kelp:     194 rows → max 9  (9×20=180 ≤ 194)
-    // Midnight: 329 rows → max 16 (16×20=320 ≤ 329)
-    switch (this.biomeIdx) {
-      case 0:  return Phaser.Math.Between(3,  4);   // Coral
-      case 1:  return Phaser.Math.Between(7,  9);   // Kelp
-      case 2:  return Phaser.Math.Between(12, 16);  // Midnight
-      default: return Phaser.Math.Between(2,  5);   // Hadal (batch-based)
-    }
-  }
-
   _maybeSpawnCoin(spawnY, speed) {
     if (!this._lastGaps?.length) return;
-    if (this._coinsThisBiome >= 20) return;
-    if (--this._nextCoinIn > 0) return;
+    if (this._coinsThisBatch >= 30) return;
+    if (this.depth < this._nextCoinDepth) return;
 
     const gap    = Phaser.Utils.Array.GetRandom(this._lastGaps);
     const margin = 22;
@@ -613,12 +635,12 @@ export default class Game extends Phaser.Scene {
 
     const x = gap.x1 + margin + Math.random() * range;
     this._spawnCoin(x, spawnY, speed);
-    this._coinsThisBiome++;
-    this._nextCoinIn = this._coinSpawnInterval();
+    this._coinsThisBatch++;
+    this._nextCoinDepth = this.depth + Phaser.Math.Between(100, 200);
   }
 
   _spawnCoin(x, y, speed) {
-    const color = BIOMES[this.biomeIdx].obsColor;
+    const color = this._activeObjSkin !== 'default' ? this._objSkinTint : BIOMES[this.biomeIdx].obsColor;
     const coin  = this.add.image(x, y, 'coinTex')
       .setTint(color)
       .setBlendMode(Phaser.BlendModes.ADD)
@@ -642,9 +664,11 @@ export default class Game extends Phaser.Scene {
     this.tweens.killTweensOf(coin);
     coin.destroy();
 
-    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.75 });
+    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.75 * sfxVol() });
 
     this._coinsCollectedTotal++;
+    this.coins++;
+    localStorage.setItem(STORAGE_COINS, this.coins);
     this._updateCoinProgress();
 
     const color = '#' + BIOMES[this.biomeIdx].obsColor.toString(16).padStart(6, '0');
@@ -655,33 +679,6 @@ export default class Game extends Phaser.Scene {
     this.tweens.add({
       targets: txt, y: cy - 55, alpha: 0, duration: 700,
       onComplete: () => txt.destroy(),
-    });
-
-    // Every 20 coins earns 1 respawn
-    if (this._coinsCollectedTotal % 20 === 0) {
-      this.coins++;
-      localStorage.setItem(STORAGE_COINS, this.coins);
-      if (this.cache.audio.has('1upSFX')) this.sound.play('1upSFX', { volume: 0.9 });
-      this._showRespawnEarned();
-    }
-  }
-
-  _showRespawnEarned() {
-    const banner = this.add.text(W / 2, H * 0.44, '+1 RESPAWN EARNED', {
-      fontSize: '22px', fontFamily: 'Arial Black',
-      color: '#ddaa00', stroke: '#000', strokeThickness: 4,
-    }).setOrigin(0.5).setDepth(40).setAlpha(0).setScale(0.6);
-    this.tweens.add({
-      targets: banner, alpha: 1, scaleX: 1, scaleY: 1,
-      duration: 300, ease: 'Back.Out',
-      onComplete: () => {
-        this.time.delayedCall(1400, () => {
-          this.tweens.add({
-            targets: banner, alpha: 0, y: banner.y - 28, duration: 480,
-            onComplete: () => banner.destroy(),
-          });
-        });
-      },
     });
   }
 
@@ -703,11 +700,20 @@ export default class Game extends Phaser.Scene {
 
   _maybeSpawnShell(spawnY, speed) {
     if (this._shellsThisBiome >= 1) return;
+    if (!this._lastGaps?.length) return;
     if (--this._nextShellIn > 0) return;
 
-    // Shell can land anywhere — including inside obstacle zones.
-    // Collecting it through a wall costs one pressure hit but grants 8 s of phasing.
-    const x = DIVER_MARGIN + Math.random() * (W - DIVER_MARGIN * 2);
+    // Place shell inside a gap so it is always in open water and reachable.
+    // A small margin (12 px) keeps it clear of the wall edge visually.
+    // Placement is fully random across the gap width — near the edges is
+    // harder to collect without grazing a wall, near the centre is easier.
+    const gap    = Phaser.Utils.Array.GetRandom(this._lastGaps);
+    const margin = 12;
+    const lo     = gap.x1 + margin;
+    const hi     = gap.x2 - margin;
+    if (hi <= lo) return;
+
+    const x = lo + Math.random() * (hi - lo);
     this._spawnShell(x, spawnY, speed);
     this._shellsThisBiome++;
   }
@@ -736,9 +742,9 @@ export default class Game extends Phaser.Scene {
     shell.destroy();
 
     // Pickup chime, then loop the invincibility track
-    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.9 });
+    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.9 * sfxVol() });
     if (this.cache.audio.has('invincibleSFX')) {
-      this._invincibleSFX = this.sound.add('invincibleSFX', { volume: 0.8, loop: true });
+      this._invincibleSFX = this.sound.add('invincibleSFX', { volume: 0.8 * sfxVol(), loop: true });
       this._invincibleSFX.play();
     }
 
@@ -800,9 +806,9 @@ export default class Game extends Phaser.Scene {
 
   _updateCoinProgress() {
     if (!this.coinProgressTxt) return;
-    const n = this._coinsCollectedTotal % 20;
+    const n = this._coinsCollectedTotal;
     this.coinProgressTxt
-      .setText(`⬡  ${n} / 20`)
+      .setText(`⬡  ${n}`)
       .setColor(n > 0 ? '#ddaa00' : '#554400');
   }
 
@@ -824,7 +830,7 @@ export default class Game extends Phaser.Scene {
     if (this.invincible || this.dead) return;
     this.invincible = true;
     this.pressure = Math.min(this.pressure + PRESSURE_HIT, 1.0);
-    if (this.cache.audio.has('hitSFX')) this.sound.play('hitSFX', { volume: 0.9 });
+    if (this.cache.audio.has('hitSFX')) this.sound.play('hitSFX', { volume: 0.9 * sfxVol() });
     navigator.vibrate?.(40);  // Android / web fallback
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
 
@@ -904,7 +910,8 @@ export default class Game extends Phaser.Scene {
   // ── CONTINUE SCREEN ───────────────────────────────────────────────────────
 
   _showContinue() {
-    this._updateCoinLabel();
+    this.lives = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
+    this._updateContinueLives();
     this.contObjs.forEach(o => o.setVisible(true));
     this.contCountdown = 10;
     this.contTxt.setText('10');
@@ -996,24 +1003,42 @@ export default class Game extends Phaser.Scene {
     this.time.delayedCall(1000, tick);
   }
 
+  _useLife() {
+    if (this.lives <= 0) return;
+    const newLives = this.lives - 1;
+    localStorage.setItem(STORAGE_LIVES, newLives);
+    this.lives = newLives;
+    this._updateLivesHUD();
+    this._revive();
+  }
+
   _watchAd() {
-    // Pause the countdown while "ad" runs
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
-
     const adTxt = this.add.text(W / 2, H / 2, 'LOADING AD...', {
       fontSize: '20px', fontFamily: 'Arial', color: '#0088bb',
     }).setOrigin(0.5).setDepth(65);
-
-    // TODO: replace with AdMob.showRewardVideo() — call _revive() in the success callback
+    // TODO (publishing): replace stub with AdMob.showRewardVideo({ adId: 'ca-app-pub-...' })
+    //   On reward callback: adTxt.destroy(); this._revive();
+    //   On dismiss/failure: adTxt.destroy(); show contObjs again
     this.time.delayedCall(1500, () => { adTxt.destroy(); this._revive(); });
   }
 
-  _useCoins() {
-    if (this.coins < 1) return;
-    this.coins--;
-    localStorage.setItem(STORAGE_COINS, this.coins);
-    this._revive();
+  _updateLivesHUD() {
+    if (!this.livesTxt) return;
+    this.livesTxt.setText(this.lives > 0 ? `♥ ${this.lives}` : '');
+  }
+
+  _updateContinueLives() {
+    if (!this.contLivesLbl) return;
+    const l = this.lives;
+    this.contLivesLbl.setText(l > 0 ? `♥  ${l}  ${l === 1 ? 'life' : 'lives'} available` : 'No lives remaining');
+    this.contLivesLbl.setColor(l > 0 ? '#cc0077' : '#445566');
+    if (this.useLifeBtn) {
+      this.useLifeBtn.setFillStyle(l > 0 ? 0x110010 : 0x0f0f0f);
+      this.useLifeBtn.setStrokeStyle(1.5, l > 0 ? 0xcc0077 : 0x333333, l > 0 ? 0.8 : 0.35);
+    }
+    if (this.useLifeTxt) this.useLifeTxt.setColor(l > 0 ? '#cc0077' : '#333333');
   }
 
   _goToGameOver() {
@@ -1048,6 +1073,8 @@ export default class Game extends Phaser.Scene {
     this.physics.resume();
     this._currentMusic?.resume();
     this.pauseObjs.forEach(o => o.setVisible(false));
+    this.pauseSettingsObjs?.forEach(o => o.setVisible(false));
+    this.pauseCustomizeObjs?.forEach(o => o.setVisible(false));
   }
 
   // ── UPDATE ────────────────────────────────────────────────────────────────
@@ -1105,20 +1132,23 @@ export default class Game extends Phaser.Scene {
       this.shellAura.y = this.diver.y;
     }
 
-    // ── BUBBLE TRAIL ──────────────────────────────────────────────
+    // ── PARTICLE TRAIL ────────────────────────────────────────────
     this.trailTimer += delta;
-    if (this.trailTimer > 165) {
+    if (this._trailEnabled && this.trailTimer > 80) {
       this.trailTimer = 0;
-      const bub = this.add.image(
-        this.diver.x + Phaser.Math.Between(-7, 7),
-        this.diver.y + 20, 'bubble'
-      ).setAlpha(0.4).setScale(Phaser.Math.FloatBetween(0.25, 0.9)).setDepth(9);
-      this.trail.push({ img: bub, life: 1.0 });
+      // Tail position: offset from diver center toward the back end of the fish
+      const angleRad = Phaser.Math.DegToRad(this.diver.angle);
+      const flipSign = this.diver.flipX ? 1 : -1;
+      const tx = this.diver.x + flipSign * 36 * Math.cos(angleRad);
+      const ty = this.diver.y + flipSign * 36 * Math.sin(angleRad);
+      this._spawnTrailParticles(tx, ty);
     }
     this.trail = this.trail.filter(e => {
-      e.life -= dt * 1.5;
-      e.img.y -= 30 * dt;
-      e.img.alpha = e.life * 0.4;
+      e.life -= dt * e.decay;
+      e.img.x   += (e.velX || 0) * dt;
+      e.img.y   += (e.velY || -30) * dt;
+      e.img.alpha = e.life * (e.maxAlpha || 0.4);
+      if (e.rotSpeed) e.img.angle += e.rotSpeed * dt;
       if (e.life <= 0) { e.img.destroy(); return false; }
       return true;
     });
@@ -1157,15 +1187,6 @@ export default class Game extends Phaser.Scene {
 
   _updateCoinLabel() {
     if (this.coinLbl) this.coinLbl.setText(`⬡ ${this.coins} coins`);
-    if (this.useCoinBtn) {
-      const hasCoins = this.coins > 0;
-      this.useCoinBtn.setFillStyle(hasCoins ? 0x120d00 : 0x0f0f0f);
-      this.useCoinBtn.setStrokeStyle(1.5, hasCoins ? 0xddaa00 : 0x333333, hasCoins ? 0.8 : 0.35);
-      if (this.useCoinTxt) {
-        this.useCoinTxt.setColor(hasCoins ? '#ddaa00' : '#333333');
-        this.useCoinTxt.setText(`USE COIN  (${this.coins} left)`);
-      }
-    }
   }
 
   _scrollGroup(group, dt) {
@@ -1190,6 +1211,156 @@ export default class Game extends Phaser.Scene {
       if (obj.y < -200) { obj.destroy(); return false; }
       return true;
     });
+  }
+
+  // ── TRAIL EMITTERS ────────────────────────────────────────────────────────
+
+  _spawnTrailParticles(x, y) {
+    switch (this._activeTrail) {
+      case 'neon':      this._trailNeon(x, y);      break;
+      case 'crimson':   this._trailCrimson(x, y);   break;
+      case 'phantom':   this._trailPhantom(x, y);   break;
+      case 'legendary': this._trailLegendary(x, y); break;
+      default:          this._trailDefault(x, y);   break;
+    }
+  }
+
+  // Default — small, subdued white/blue circles that drift straight up
+  _trailDefault(x, y) {
+    const r = Phaser.Math.FloatBetween(2, 4.5);
+    const bub = this.add.circle(
+      x + Phaser.Math.Between(-5, 5),
+      y + Phaser.Math.Between(0, 8),
+      r, 0xaaddff, 0.6
+    ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+    this.trail.push({ img: bub, life: 1.0, velX: Phaser.Math.Between(-8, 8), velY: -28, decay: 1.4, maxAlpha: 0.35 });
+  }
+
+  // Neon — electric cyan 4-point spinning stars with fast upward rise
+  _trailNeon(x, y) {
+    for (let i = 0; i < 2; i++) {
+      const star = this.add.star(
+        x + Phaser.Math.Between(-10, 10),
+        y + Phaser.Math.Between(0, 10),
+        4,
+        Phaser.Math.FloatBetween(2, 3.5),
+        Phaser.Math.FloatBetween(5, 8),
+        0x00ccff
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.9);
+      this.trail.push({
+        img: star, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-22, 22),
+        velY: Phaser.Math.FloatBetween(-55, -38),
+        decay: 1.1, maxAlpha: 0.85,
+        rotSpeed: Phaser.Math.FloatBetween(180, 360) * (Math.random() < 0.5 ? 1 : -1),
+      });
+    }
+    // Occasional small outer glow dot
+    if (Math.random() < 0.4) {
+      const dot = this.add.circle(
+        x + Phaser.Math.Between(-14, 14), y,
+        Phaser.Math.FloatBetween(1.5, 3), 0x88eeff, 0.5
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({ img: dot, life: 1.0, velX: Phaser.Math.Between(-30, 30), velY: -45, decay: 1.8, maxAlpha: 0.5 });
+    }
+  }
+
+  // Crimson — hot sparks: tiny red/orange scattered shards that burst outward
+  _trailCrimson(x, y) {
+    const colors = [0xff5544, 0xff8800, 0xffcc22];
+    for (let i = 0; i < 3; i++) {
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const r = Phaser.Math.FloatBetween(1.5, 3.5);
+      const spark = this.add.circle(
+        x + Phaser.Math.Between(-6, 6),
+        y + Phaser.Math.Between(0, 6),
+        r, color, 0.9
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({
+        img: spark, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-40, 40),
+        velY: Phaser.Math.FloatBetween(-60, -20),
+        decay: 2.2, maxAlpha: 0.8,
+      });
+    }
+    // Ember — slightly larger, slower
+    if (Math.random() < 0.5) {
+      const ember = this.add.circle(
+        x, y + Phaser.Math.Between(4, 10),
+        Phaser.Math.FloatBetween(3, 5.5), 0xff3300, 0.6
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({ img: ember, life: 1.0, velX: Phaser.Math.Between(-12, 12), velY: -18, decay: 1.0, maxAlpha: 0.55 });
+    }
+  }
+
+  // Phantom — large translucent purple wispy orbs that ghost slowly upward
+  _trailPhantom(x, y) {
+    const count = Math.random() < 0.4 ? 2 : 1;
+    for (let i = 0; i < count; i++) {
+      const r = Phaser.Math.FloatBetween(7, 14);
+      const wisp = this.add.circle(
+        x + Phaser.Math.Between(-12, 12),
+        y + Phaser.Math.Between(0, 12),
+        r, 0xcc88ff, 0.5
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({
+        img: wisp, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-8, 8),
+        velY: Phaser.Math.FloatBetween(-20, -10),
+        decay: 0.75, maxAlpha: 0.4,
+      });
+    }
+    // Small inner sparkle
+    if (Math.random() < 0.6) {
+      const sp = this.add.star(
+        x + Phaser.Math.Between(-8, 8),
+        y + Phaser.Math.Between(0, 8),
+        6, 1.5, 4, 0xeeddff
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.7);
+      this.trail.push({
+        img: sp, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-15, 15),
+        velY: Phaser.Math.FloatBetween(-35, -20),
+        decay: 1.6, maxAlpha: 0.65,
+        rotSpeed: Phaser.Math.FloatBetween(60, 120),
+      });
+    }
+  }
+
+  // Legendary — spinning gold 5-point stars with stardust glow trail
+  _trailLegendary(x, y) {
+    const starCount = Math.random() < 0.5 ? 3 : 2;
+    for (let i = 0; i < starCount; i++) {
+      const inner = Phaser.Math.FloatBetween(3, 5);
+      const outer = Phaser.Math.FloatBetween(7, 12);
+      const gold = Math.random() < 0.6 ? 0xffdd00 : 0xffaa00;
+      const gs = this.add.star(
+        x + Phaser.Math.Between(-14, 14),
+        y + Phaser.Math.Between(0, 12),
+        5, inner, outer, gold
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.9);
+      this.trail.push({
+        img: gs, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-30, 30),
+        velY: Phaser.Math.FloatBetween(-60, -35),
+        decay: 0.95, maxAlpha: 0.85,
+        rotSpeed: Phaser.Math.FloatBetween(120, 300) * (Math.random() < 0.5 ? 1 : -1),
+      });
+    }
+    // Stardust — tiny golden dots scatter wide
+    for (let i = 0; i < 3; i++) {
+      const dust = this.add.circle(
+        x + Phaser.Math.Between(-18, 18),
+        y + Phaser.Math.Between(0, 8),
+        Phaser.Math.FloatBetween(1, 2.5), 0xffe066, 0.8
+      ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({
+        img: dust, life: 1.0,
+        velX: Phaser.Math.FloatBetween(-45, 45),
+        velY: Phaser.Math.FloatBetween(-70, -25),
+        decay: 2.0, maxAlpha: 0.7,
+      });
+    }
   }
 
   _initAmbientStars() {
@@ -1251,14 +1422,10 @@ export default class Game extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(31);
 
-    // Top-left coin progress — how many collected toward next respawn
-    this.coinProgressTxt = this.add.text(14, 49 + ST, '⬡  0 / 20', {
-      fontSize: '15px', fontFamily: 'Arial Black',
-      color: '#554400', stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0, 0.5).setDepth(30);
-    this.add.text(14, 66 + ST, '= +1 RESPAWN', {
-      fontSize: '8px', fontFamily: 'Arial Black',
-      color: '#223344', stroke: '#000', strokeThickness: 1,
+    // Top-left coin counter — total collected this run
+    this.coinProgressTxt = this.add.text(14, 52 + ST, '⬡  0', {
+      fontSize: '22px', fontFamily: 'Arial Black',
+      color: '#554400', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0, 0.5).setDepth(30);
 
     // Depth counter — electric cyan stroke
@@ -1266,6 +1433,13 @@ export default class Game extends Phaser.Scene {
       fontSize: '30px', fontFamily: 'Arial Black',
       color: '#ffffff', stroke: '#00ccff', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(30);
+
+    // Lives counter — top-left below coin counter
+    this.livesTxt = this.add.text(14, 76 + ST, '', {
+      fontSize: '16px', fontFamily: 'Arial Black',
+      color: '#cc0077', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0, 0.5).setDepth(30);
+    this._updateLivesHUD();
 
     // Biome label — color tracks current biome's neon obsColor
     this.biomeTxt = this.add.text(W / 2, 76 + ST, `▼  ${BIOMES[0].name.toUpperCase()}  ▼`, {
@@ -1290,89 +1464,441 @@ export default class Game extends Phaser.Scene {
   }
 
   _buildPauseOverlay() {
-    const d = 55;
-    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.88).setDepth(d);
+    const d  = 55;
+    const cx = W / 2;
+    const pauseObjs = [];
+    const mk = o => { pauseObjs.push(o); return o; };
 
-    // Thin neon rule under title
-    const rule = this.add.rectangle(W / 2, H * 0.215, W * 0.80, 1, 0x0088bb, 0.30).setDepth(d + 1);
+    mk(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.88).setDepth(d));
+    mk(this.add.rectangle(cx, H * 0.30, W * 0.80, 1, 0x0088bb, 0.30).setDepth(d + 1));
 
-    const title = this.add.text(W / 2, H * 0.295, 'PAUSED', {
+    mk(this.add.text(cx, H * 0.24, 'PAUSED', {
       fontSize: '52px', fontFamily: 'Arial Black',
       color: '#0088bb', stroke: '#fff', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(d + 1);
+    }).setOrigin(0.5).setDepth(d + 1));
 
-    this.coinLbl = this.add.text(W / 2, H * 0.415, `⬡ ${this.coins} coins`, {
-      fontSize: '18px', fontFamily: 'Arial', color: '#ddaa00',
-    }).setOrigin(0.5).setDepth(d + 1);
-
-    const resumeBtn = this._makeBtn(W / 2, H * 0.530, 'RESUME', 240, 56, 0x001122, 0x0099cc, 26, d + 1,
+    const resumeBtn   = this._makeBtn(cx, H * 0.46, 'RESUME', 240, 56, 0x001122, 0x0099cc, 26, d + 1,
       () => this._resume());
 
-    const quitBtn = this._makeBtn(W / 2, H * 0.660, 'QUIT TO MENU', 240, 52, 0x120008, 0xdd0077, 21, d + 1,
+    const settingsBtn = this._makeBtn(cx, H * 0.58, '⚙  SETTINGS', 240, 52, 0x080808, 0x445566, 22, d + 1,
+      () => this.pauseSettingsObjs?.forEach(o => o.setVisible(true)));
+
+    const quitBtn     = this._makeBtn(cx, H * 0.70, 'QUIT TO MENU', 240, 52, 0x120008, 0xdd0077, 21, d + 1,
       () => {
         this._resume();
         this.cameras.main.fadeOut(250);
         this.time.delayedCall(250, () => this.scene.start('Menu'));
       });
 
-    this.pauseObjs = [bg, rule, title, this.coinLbl, ...resumeBtn, ...quitBtn];
+    pauseObjs.push(...resumeBtn, ...settingsBtn, ...quitBtn);
+    this.pauseObjs = pauseObjs;
     this.pauseObjs.forEach(o => o.setVisible(false));
+
+    this._buildPauseSettingsPanel(d + 2);
+  }
+
+  _buildPauseSettingsPanel(d) {
+    const cx = W / 2;
+    const objs = [];
+    const mk = o => { objs.push(o); return o; };
+
+    mk(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.94).setDepth(d));
+    mk(this.add.rectangle(cx, H * 0.21, W * 0.80, 1, 0x445566, 0.25).setDepth(d + 1));
+
+    mk(this.add.text(cx, H * 0.15, '⚙  SETTINGS', {
+      fontSize: '28px', fontFamily: 'Arial Black',
+      color: '#6688aa', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(d + 1));
+
+    this._buildPauseSlider(mk, cx, H * 0.38, d + 1, '🎵  MUSIC',
+      STORAGE_VOL_MUSIC, STORAGE_MUTE_MUSIC, 0.7,
+      (vol, muted) => {
+        const v = muted ? 0 : vol;
+        this._musicSounds.forEach(s => s.setVolume(v));
+      });
+
+    this._buildPauseSlider(mk, cx, H * 0.57, d + 1, '🔊  SFX',
+      STORAGE_VOL_SFX, STORAGE_MUTE_SFX, 0.7, () => {});
+
+    // ── PARTICLE TRAIL TOGGLE ─────────────────────────────────────
+    const trkW  = W - 100;
+    const trkL  = cx - trkW / 2;
+    const trkR  = cx + trkW / 2;
+    const trlY  = H * 0.678;
+
+    mk(this.add.text(trkL, trlY, '✦  PARTICLE TRAIL', {
+      fontSize: '16px', fontFamily: 'Arial Black', color: '#6688aa',
+    }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
+
+    const trlBg = mk(this.add.rectangle(trkR - 40, trlY, 82, 34,
+      this._trailEnabled ? 0x001122 : 0x111111)
+      .setStrokeStyle(1.5, this._trailEnabled ? 0x0088bb : 0x334455, this._trailEnabled ? 0.8 : 0.5)
+      .setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
+
+    const trlTxt = mk(this.add.text(trkR - 40, trlY, this._trailEnabled ? 'ON' : 'OFF', {
+      fontSize: '15px', fontFamily: 'Arial Black',
+      color: this._trailEnabled ? '#00ccff' : '#334455',
+    }).setOrigin(0.5).setDepth(d + 2).setVisible(false));
+
+    trlBg.on('pointerdown', () => {
+      if (!this.gamePaused) return;
+      this._trailEnabled = !this._trailEnabled;
+      localStorage.setItem(STORAGE_TRAIL, this._trailEnabled ? '1' : '0');
+      trlBg.setFillStyle(this._trailEnabled ? 0x001122 : 0x111111);
+      trlBg.setStrokeStyle(1.5, this._trailEnabled ? 0x0088bb : 0x334455, this._trailEnabled ? 0.8 : 0.5);
+      trlTxt.setText(this._trailEnabled ? 'ON' : 'OFF')
+        .setColor(this._trailEnabled ? '#00ccff' : '#334455');
+    });
+
+    // ── CUSTOMIZE ─────────────────────────────────────────────────
+    mk(this.add.rectangle(cx, H * 0.770, W * 0.80, 1, 0x445566, 0.18).setDepth(d).setVisible(false));
+
+    const [custBtn, custTxt] = this._makeBtn(cx, H * 0.830, '✦  CUSTOMIZE', 240, 48, 0x0a0018, 0x9944dd, 20, d + 1,
+      () => {
+        this._refreshPauseCustomize();
+        this.pauseCustomizeObjs?.forEach(o => o.setVisible(true));
+        this._pauseCustNav?.('main');
+      });
+    objs.push(custBtn, custTxt);
+    custBtn.setVisible(false); custTxt.setVisible(false);
+
+    const backBtn = mk(this.add.text(cx, H * 0.912, '‹  BACK', {
+      fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
+    }).setOrigin(0.5).setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
+    backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
+    backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
+    backBtn.on('pointerdown', () => objs.forEach(o => o.setVisible(false)));
+
+    this.pauseSettingsObjs = objs;
+    this.pauseSettingsObjs.forEach(o => o.setVisible(false));
+
+    this._buildPauseCustomizePanel(d + 2);
+  }
+
+  _buildPauseCustomizePanel(d) {
+    const cx     = W / 2;
+    const cardW  = W - 48;
+    const allObjs = [];
+    const push = o => { allObjs.push(o); return o; };
+
+    // ── CATEGORY LIST (main view) ─────────────────────────────────────────────
+    const catObjs = [];
+    const mkC = o => { push(o); catObjs.push(o); return o; };
+
+    mkC(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.97).setDepth(d));
+    mkC(this.add.text(cx, H * 0.10, '✦  CUSTOMIZE', {
+      fontSize: '26px', fontFamily: 'Arial Black',
+      color: '#9944dd', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(d + 1));
+    mkC(this.add.rectangle(cx, H * 0.158, W * 0.80, 1, 0x6611aa, 0.20).setDepth(d + 1));
+
+    const catDefs = [
+      { icon: '🤿', label: 'PLAYER SKINS', storageKey: STORAGE_ACTIVE_SKIN,     data: SKINS     },
+      { icon: '✨', label: 'PARTICLES',     storageKey: STORAGE_ACTIVE_TRAIL,    data: TRAILS    },
+      { icon: '🪸', label: 'OBJECTS',       storageKey: STORAGE_ACTIVE_OBJ_SKIN, data: OBJ_SKINS },
+      { icon: '🌊', label: 'BACKGROUNDS',   storageKey: STORAGE_ACTIVE_BG,       data: BG_SKINS  },
+    ];
+    const pageKeys = ['skin', 'trail', 'obj', 'bg'];
+
+    catDefs.forEach((cat, i) => {
+      const py = H * 0.255 + i * 98;
+      const card = mkC(this.add.rectangle(cx, py, cardW, 82, 0x0a0018)
+        .setStrokeStyle(1, 0x6611aa, 0.40).setDepth(d + 1).setInteractive({ useHandCursor: true }));
+      mkC(this.add.text(cx - cardW / 2 + 28, py, cat.icon, {
+        fontSize: '26px', fontFamily: 'Arial',
+      }).setOrigin(0.5).setDepth(d + 2));
+      mkC(this.add.text(cx - cardW / 2 + 62, py - 14, cat.label, {
+        fontSize: '16px', fontFamily: 'Arial Black', color: '#9944dd', stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0, 0.5).setDepth(d + 2));
+      const activeKey = localStorage.getItem(cat.storageKey) || 'default';
+      const activeName = cat.data.find(s => s.key === activeKey)?.name ?? 'DEFAULT';
+      mkC(this.add.text(cx - cardW / 2 + 62, py + 12, activeName, {
+        fontSize: '12px', fontFamily: 'Arial', color: '#445566',
+      }).setOrigin(0, 0.5).setDepth(d + 2));
+      mkC(this.add.text(cx + cardW / 2 - 14, py, '›', {
+        fontSize: '28px', fontFamily: 'Arial Black', color: '#9944dd',
+      }).setOrigin(1, 0.5).setDepth(d + 2));
+      card.on('pointerover', () => card.setStrokeStyle(2, 0x9944dd, 0.8));
+      card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
+      card.on('pointerdown', () => { if (this.gamePaused) this._pauseCustNav?.(pageKeys[i]); });
+    });
+
+    const catBack = mkC(this.add.text(cx, H * 0.895, '‹  BACK', {
+      fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
+    }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true }));
+    catBack.on('pointerover', () => catBack.setColor('#6688aa'));
+    catBack.on('pointerout',  () => catBack.setColor('#2a3a44'));
+    catBack.on('pointerdown', () => {
+      catObjs.forEach(o => o.setVisible(false));
+      this.pauseSettingsObjs.forEach(o => o.setVisible(true));
+    });
+
+    // ── SUB-PANELS ────────────────────────────────────────────────────────────
+    const skinPanel  = this._buildCosmeticSubPanel(d, push, '🤿  PLAYER SKINS',
+      SKINS,     STORAGE_OWNED_SKINS,     STORAGE_ACTIVE_SKIN,     s => s.tint,
+      item => {
+        this._activeSkin = item.key;
+        const t = SKIN_TINTS[item.key] ?? 0xffffff;
+        // SPRITE SWAP POINT — replace setTint() with setTexture(item.spriteKey) when real sprites are ready
+        this.diver.setTint(t); this.diverDead.setTint(t); this.diverGlow.setFillStyle(t, 0.22);
+      });
+
+    const trailPanel = this._buildCosmeticSubPanel(d, push, '✨  PARTICLES',
+      TRAILS,    STORAGE_OWNED_TRAILS,    STORAGE_ACTIVE_TRAIL,    s => s.tint,
+      item => { this._activeTrail = item.key; });
+
+    const objPanel   = this._buildCosmeticSubPanel(d, push, '🪸  OBJECTS',
+      OBJ_SKINS, STORAGE_OWNED_OBJ_SKINS, STORAGE_ACTIVE_OBJ_SKIN, s => s.tint,
+      item => {
+        this._activeObjSkin = item.key;
+        this._objSkinTint   = item.tint;
+        // SPRITE SWAP POINT — apply new obj skin tint to active walls/decorations
+      });
+
+    const bgPanel    = this._buildCosmeticSubPanel(d, push, '🌊  BACKGROUNDS',
+      BG_SKINS,  STORAGE_OWNED_BGS,       STORAGE_ACTIVE_BG,       s => s.tint,
+      item => {
+        this._activeBgSkin = item.key;
+        this._bgSkinTint   = item.tint;
+        // SPRITE SWAP POINT — replace setTint() with setTexture() for bg layer sprites
+        this.bgLayers.forEach(l => l.setTint(item.tint));
+      });
+
+    // ── NAV ───────────────────────────────────────────────────────────────────
+    const pageMap = { main: catObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, obj: objPanel.subObjs, bg: bgPanel.subObjs };
+    this._pauseCustNav = page => {
+      Object.values(pageMap).forEach(arr => arr.forEach(o => o.setVisible(false)));
+      pageMap[page]?.forEach(o => o.setVisible(true));
+    };
+
+    this._pauseSkinRefs  = skinPanel.refs;
+    this._pauseTrailRefs = trailPanel.refs;
+    this._pauseObjRefs   = objPanel.refs;
+    this._pauseBgRefs    = bgPanel.refs;
+
+    this.pauseCustomizeObjs = allObjs;
+    allObjs.forEach(o => o.setVisible(false));
+  }
+
+  _buildCosmeticSubPanel(d, push, title, dataArr, storageOwnedKey, storageActiveKey, getColor, onEquip) {
+    const cx    = W / 2;
+    const cardW = W - 48;
+    const left  = cx - cardW / 2;
+    const subObjs = [];
+    const mk = o => { push(o); subObjs.push(o); return o; };
+    const refs = [];
+
+    mk(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.97).setDepth(d));
+    mk(this.add.text(cx, H * 0.10, title, {
+      fontSize: '22px', fontFamily: 'Arial Black',
+      color: '#9944dd', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(d + 1));
+    mk(this.add.rectangle(cx, H * 0.158, W * 0.80, 1, 0x6611aa, 0.20).setDepth(d + 1));
+    mk(this.add.text(cx, H * 0.196, 'Unlock more in the Store', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#334455',
+    }).setOrigin(0.5).setDepth(d + 1));
+
+    dataArr.forEach((item, i) => {
+      const py  = H * 0.285 + i * 72;
+      const col = getColor(item);
+      const isWhite = col === 0xffffff;
+
+      const card = mk(this.add.rectangle(cx, py, cardW, 60, 0x0a0018)
+        .setStrokeStyle(1, 0x6611aa, 0.35).setDepth(d + 1).setInteractive({ useHandCursor: true }));
+      mk(this.add.circle(left + 34, py, 22, col, isWhite ? 0.45 : 0.8).setDepth(d + 2));
+      mk(this.add.circle(left + 34, py, 22, 0, 0)
+        .setStrokeStyle(1.5, col, isWhite ? 0.35 : 0.65).setDepth(d + 3));
+      mk(this.add.text(left + 68, py - 9, item.name, {
+        fontSize: '14px', fontFamily: 'Arial Black', color: '#cccccc', stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0, 0.5).setDepth(d + 2));
+      mk(this.add.text(left + 68, py + 11, item.rarity.toUpperCase(), {
+        fontSize: '11px', fontFamily: 'Arial Black', color: item.rc,
+      }).setOrigin(0, 0.5).setDepth(d + 2));
+
+      const actionBtn = mk(this.add.rectangle(cx + cardW / 2 - 50, py, 84, 32, 0x1a0030)
+        .setStrokeStyle(1, 0x6611aa, 0.7).setDepth(d + 2).setInteractive({ useHandCursor: true }));
+      const actionTxt = mk(this.add.text(cx + cardW / 2 - 50, py, 'EQUIP', {
+        fontSize: '12px', fontFamily: 'Arial Black', color: '#9944dd',
+      }).setOrigin(0.5).setDepth(d + 3));
+
+      refs.push({ actionBtn, actionTxt, item, storageOwnedKey, storageActiveKey });
+
+      card.on('pointerover', () => card.setStrokeStyle(1.5, 0x9944dd, 0.7));
+      card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.35));
+      actionBtn.on('pointerdown', () => {
+        if (!this.gamePaused) return;
+        const owned = (localStorage.getItem(storageOwnedKey) || 'default').split(',');
+        if (!owned.includes(item.key)) return;
+        localStorage.setItem(storageActiveKey, item.key);
+        onEquip(item);
+        this._refreshPauseCustomize();
+      });
+    });
+
+    const backBtn = mk(this.add.text(cx, H * 0.895, '‹  BACK', {
+      fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
+    }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true }));
+    backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
+    backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
+    backBtn.on('pointerdown', () => { if (this.gamePaused) this._pauseCustNav?.('main'); });
+
+    return { subObjs, refs };
+  }
+
+  _refreshPauseCustomize() {
+    [this._pauseSkinRefs, this._pauseTrailRefs, this._pauseObjRefs, this._pauseBgRefs]
+      .forEach(refs => this._refreshCosmeticRefs(refs));
+  }
+
+  _refreshCosmeticRefs(refs) {
+    if (!refs) return;
+    refs.forEach(({ actionBtn, actionTxt, item, storageOwnedKey, storageActiveKey }) => {
+      const owned    = (localStorage.getItem(storageOwnedKey)  || 'default').split(',');
+      const isActive = (localStorage.getItem(storageActiveKey) || 'default') === item.key;
+      const isOwned  = owned.includes(item.key);
+      if (isActive) {
+        actionBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
+        actionTxt.setText('✓ ACTIVE').setColor('#00cc66').setFontSize('10px');
+      } else if (isOwned) {
+        actionBtn.setFillStyle(0x001100).setStrokeStyle(1, 0x00aa44, 0.7);
+        actionTxt.setText('EQUIP').setColor('#00aa44').setFontSize('12px');
+      } else {
+        actionBtn.setFillStyle(0x0f0f0f).setStrokeStyle(1, 0x222222, 0.4);
+        actionTxt.setText('LOCKED').setColor('#333333').setFontSize('11px');
+      }
+    });
+  }
+
+
+  _buildPauseSlider(mk, cx, cy, d, label, volKey, mutKey, defaultVol, onChange) {
+    const trackW     = W - 100;
+    const trackLeft  = cx - trackW / 2;
+    const trackRight = cx + trackW / 2;
+
+    let vol   = parseFloat(localStorage.getItem(volKey));
+    let muted = localStorage.getItem(mutKey) === '1';
+    if (isNaN(vol) || vol < 0 || vol > 1) vol = defaultVol;
+
+    const activeColor = 0x0088bb;
+    const mutedColor  = 0x334455;
+    const thumbActive = 0x00aacc;
+    const thumbMuted  = 0x445566;
+
+    const lbl = mk(this.add.text(trackLeft, cy - 38, label, {
+      fontSize: '16px', fontFamily: 'Arial Black',
+      color: muted ? '#334455' : '#6688aa',
+    }).setOrigin(0, 0.5).setDepth(d).setVisible(false));
+
+    const muteIcon = mk(this.add.text(trackRight, cy - 38, muted ? '🔇' : '🔊', {
+      fontSize: '22px', fontFamily: 'Arial',
+    }).setOrigin(1, 0.5).setDepth(d).setVisible(false)
+      .setInteractive({ useHandCursor: true }));
+
+    const pctTxt = mk(this.add.text(cx, cy + 28, `${Math.round(vol * 100)}%`, {
+      fontSize: '13px', fontFamily: 'Arial', color: '#445566',
+    }).setOrigin(0.5).setDepth(d).setVisible(false));
+
+    mk(this.add.rectangle(cx, cy, trackW, 6, 0x1a2a3a).setDepth(d).setVisible(false));
+
+    const fill = mk(this.add.rectangle(trackLeft, cy, trackW * vol, 6,
+      muted ? mutedColor : activeColor).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
+
+    const thumb = mk(this.add.circle(trackLeft + trackW * vol, cy, 12,
+      muted ? thumbMuted : thumbActive).setDepth(d + 2).setVisible(false)
+      .setInteractive({ useHandCursor: true, draggable: true }));
+
+    const zone = mk(this.add.rectangle(cx, cy, trackW, 40, 0x000000, 0)
+      .setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
+
+    const applyVol = (ratio) => {
+      vol = Phaser.Math.Clamp(ratio, 0, 1);
+      thumb.x    = trackLeft + trackW * vol;
+      fill.width = trackW * vol;
+      pctTxt.setText(`${Math.round(vol * 100)}%`);
+      localStorage.setItem(volKey, vol.toFixed(3));
+      onChange(vol, muted);
+    };
+
+    const applyMute = () => {
+      muteIcon.setText(muted ? '🔇' : '🔊');
+      lbl.setColor(muted ? '#334455' : '#6688aa');
+      fill.setFillStyle(muted ? mutedColor : activeColor);
+      thumb.setFillStyle(muted ? thumbMuted : thumbActive);
+      localStorage.setItem(mutKey, muted ? '1' : '0');
+      onChange(vol, muted);
+    };
+
+    thumb.on('drag', (ptr, dragX) => {
+      if (!this.gamePaused) return;
+      applyVol((Phaser.Math.Clamp(dragX, trackLeft, trackRight) - trackLeft) / trackW);
+    });
+    zone.on('pointerdown', (ptr) => {
+      if (!this.gamePaused) return;
+      applyVol((Phaser.Math.Clamp(ptr.x, trackLeft, trackRight) - trackLeft) / trackW);
+    });
+    muteIcon.on('pointerdown', () => {
+      if (!this.gamePaused) return;
+      muted = !muted;
+      applyMute();
+    });
   }
 
   _buildContinueOverlay() {
-    const d = 60;
-    const bg = this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.90).setDepth(d);
+    const d  = 60;
+    const cx = W / 2;
+    const bg = this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.90).setDepth(d);
 
-    const title = this.add.text(W / 2, H * 0.17, 'CONTINUE?', {
+    const title = this.add.text(cx, H * 0.17, 'CONTINUE?', {
       fontSize: '46px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#fff', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(d + 1);
 
-    this.contTxt = this.add.text(W / 2, H * 0.31, '10', {
+    this.contTxt = this.add.text(cx, H * 0.31, '10', {
       fontSize: '72px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(d + 1);
 
-    const secLbl = this.add.text(W / 2, H * 0.415, 'seconds remaining', {
+    const secLbl = this.add.text(cx, H * 0.415, 'seconds remaining', {
       fontSize: '13px', fontFamily: 'Arial', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d + 1);
 
-    // Watch Ad button — green neon (free action)
-    const adBtns = this._makeBtn(W / 2, H * 0.525, 'WATCH AD  —  FREE', 280, 56, 0x001100, 0x88bb00, 22, d + 1,
-      () => this._watchAd());
-
-    // Use Coin button — gold neon, dynamic enabled/disabled state
-    this.useCoinBtn = this.add.rectangle(W / 2, H * 0.650, 280, 56, 0x120d00)
-      .setStrokeStyle(1.5, 0xddaa00, 0.8)
-      .setDepth(d + 1).setInteractive({ useHandCursor: true });
-    this.useCoinTxt = this.add.text(W / 2, H * 0.650, `USE COIN  (${this.coins} left)`, {
-      fontSize: '21px', fontFamily: 'Arial Black',
-      color: '#ddaa00', stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5).setDepth(d + 2);
-    this.useCoinBtn.on('pointerover',  () => this.useCoinBtn.setStrokeStyle(2.5, this.coins > 0 ? 0xddaa00 : 0x333333, 1.0));
-    this.useCoinBtn.on('pointerout',   () => this.useCoinBtn.setStrokeStyle(1.5, this.coins > 0 ? 0xddaa00 : 0x333333, 0.8));
-    this.useCoinBtn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._useCoins(); });
-
-    const buyLbl = this.add.text(W / 2, H * 0.755, 'Buy coins  •  4 for $0.99', {
-      fontSize: '14px', fontFamily: 'Arial', color: '#2a3a44',
+    // Lives available display — refreshed in _showContinue()
+    this.contLivesLbl = this.add.text(cx, H * 0.498, '', {
+      fontSize: '18px', fontFamily: 'Arial Black', color: '#cc0077',
     }).setOrigin(0.5).setDepth(d + 1);
 
-    const giveUp = this.add.text(W / 2, H * 0.860, 'Give Up', {
-      fontSize: '17px', fontFamily: 'Arial', color: '#1e2e38',
-    }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true });
-    giveUp.on('pointerover',  () => giveUp.setColor('#4a6a7a'));
-    giveUp.on('pointerout',   () => giveUp.setColor('#1e2e38'));
-    giveUp.on('pointerdown',  () => {
-      this._sfx.button?.stop(); this._sfx.button?.play();
-      this.contEvt?.remove();
-      const prev = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
-      if (this.depth > prev) localStorage.setItem(STORAGE_BEST, this.depth);
-      this._stopMusic();
-      this.cameras.main.fadeOut(250);
-      this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
-    });
+    // Use Life button — pink neon, disabled when lives = 0
+    this.useLifeBtn = this.add.rectangle(cx, H * 0.545, 280, 52, 0x110010)
+      .setStrokeStyle(1.5, 0xcc0077, 0.8)
+      .setDepth(d + 1).setInteractive({ useHandCursor: true });
+    this.useLifeTxt = this.add.text(cx, H * 0.545, 'USE A LIFE', {
+      fontSize: '22px', fontFamily: 'Arial Black',
+      color: '#cc0077', stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5).setDepth(d + 2);
+    this.useLifeBtn.on('pointerover',  () => this.useLifeBtn.setStrokeStyle(2.5, this.lives > 0 ? 0xcc0077 : 0x333333, 1.0));
+    this.useLifeBtn.on('pointerout',   () => this.useLifeBtn.setStrokeStyle(1.5, this.lives > 0 ? 0xcc0077 : 0x333333, 0.8));
+    this.useLifeBtn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._useLife(); });
 
-    this.contObjs = [bg, title, this.contTxt, secLbl, this.useCoinBtn, this.useCoinTxt, buyLbl, giveUp, ...adBtns];
+    // Watch Ad button — green neon (free action)
+    const adBtns = this._makeBtn(cx, H * 0.638, 'WATCH AD  —  FREE', 280, 52, 0x001100, 0x88bb00, 20, d + 1,
+      () => this._watchAd());
+
+    const buyHintTxt = this.add.text(cx, H * 0.718, 'Buy lives from the store before diving', {
+      fontSize: '13px', fontFamily: 'Arial', color: '#2a3a44',
+    }).setOrigin(0.5).setDepth(d + 1);
+
+    const giveUpBtns = this._makeBtn(cx, H * 0.820, '✕  GIVE UP', 200, 44, 0x100000, 0x882222, 18, d + 1,
+      () => {
+        this.contEvt?.remove();
+        const prev = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+        if (this.depth > prev) localStorage.setItem(STORAGE_BEST, this.depth);
+        this._stopMusic();
+        this.cameras.main.fadeOut(250);
+        this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
+      });
+
+    this.contObjs = [bg, title, this.contTxt, secLbl, this.contLivesLbl,
+      this.useLifeBtn, this.useLifeTxt, ...adBtns, buyHintTxt, ...giveUpBtns];
     this.contObjs.forEach(o => o.setVisible(false));
   }
 
