@@ -55,10 +55,11 @@ export const PRESSURE_HIT   = 0.30;  // pressure added per wall collision
 //   minGaps    – minimum gaps per wall row
 //   maxGaps    – maximum gaps per wall row
 //
-//   bgSkins    – wide landmark sprites, anchored to outer zone edges,
-//                extend off-screen so they never overlap the gap
-//   fillSkins  – smaller sprites that tile to fill interior collision zones
-//                pngW / pngH = actual PNG pixel dimensions (used for aspect-ratio scaling)
+//   bgSkins    – wide landmark sprites anchored to outer zone edges; extend off-screen
+//                so they never overlap the gap. w = rendered width px (height always 110 px).
+//   fillSkins  – smaller sprites that tile to fill interior collision zones.
+//                w = rendered width px (height always 110 px).
+//                Replacement PNGs should be (w×2) wide × 220 px tall for crisp @2× retina.
 export const BIOMES = [
   {
     name:      'Coral Reef',
@@ -75,33 +76,33 @@ export const BIOMES = [
     duration:  120,   // seconds (1 song × 2 min)
     music:     ['coralBGM'],
     bgSkins: [
-      { key: 'coral01', pngW: 531, pngH: 139 },
-      { key: 'coral02', pngW: 523, pngH: 143 },
+      { key: 'coral01', w: 350 },
+      { key: 'coral02', w: 350 },
     ],
     fillSkins: [
-      { key: 'coral03', pngW: 273, pngH: 283 },
-      { key: 'coral04', pngW: 285, pngH: 284 },
-      { key: 'coral05', pngW: 146, pngH: 136 },
-      { key: 'coral06', pngW: 193, pngH: 130 },
-      { key: 'coral07', pngW: 229, pngH: 200 },
-      { key: 'coral08', pngW: 204, pngH: 188 },
-      { key: 'coral09', pngW: 257, pngH: 365, scale: 1.5 },
-      { key: 'coral10', pngW: 266, pngH: 372, scale: 1.5 },
-      { key: 'coral11', pngW: 318, pngH: 174 },
-      { key: 'coral12', pngW: 290, pngH: 177 },
-      { key: 'coral13', pngW: 353, pngH: 103 },
-      { key: 'coral14', pngW: 334, pngH: 126 },
-      { key: 'coral15', pngW: 284, pngH: 127 },
-      { key: 'coral16', pngW: 301, pngH: 135 },
-      { key: 'coral17', pngW:  70, pngH:  63 },
-      { key: 'coral18', pngW:  70, pngH:  64 },
-      { key: 'coral19', pngW:  79, pngH:  63 },
-      { key: 'coral20', pngW: 106, pngH:  88 },
-      { key: 'coral21', pngW:  98, pngH: 109 },
-      { key: 'coral22', pngW:  91, pngH:  89 },
-      { key: 'coral23', pngW: 120, pngH: 116 },
-      { key: 'coral24', pngW:  93, pngH: 114 },
-      { key: 'coral25', pngW: 122, pngH: 125 },
+      { key: 'coral03', w: 120 },
+      { key: 'coral04', w: 120 },
+      { key: 'coral05', w: 120 },
+      { key: 'coral06', w: 190 },
+      { key: 'coral07', w: 120 },
+      { key: 'coral08', w: 120 },
+      { key: 'coral09', w: 120 },
+      { key: 'coral10', w: 120 },
+      { key: 'coral11', w: 190 },
+      { key: 'coral12', w: 190 },
+      { key: 'coral13', w: 340 },
+      { key: 'coral14', w: 260 },
+      { key: 'coral15', w: 260 },
+      { key: 'coral16', w: 260 },
+      { key: 'coral17', w: 120 },
+      { key: 'coral18', w: 120 },
+      { key: 'coral19', w: 120 },
+      { key: 'coral20', w: 120 },
+      { key: 'coral21', w:  70 },
+      { key: 'coral22', w: 120 },
+      { key: 'coral23', w: 120 },
+      { key: 'coral24', w:  70 },
+      { key: 'coral25', w: 120 },
     ],
   },
   {
@@ -119,18 +120,18 @@ export const BIOMES = [
     duration:  240,   // seconds (2 songs × 2 min)
     music:     ['kelpBGM01', 'kelpBGM02'],
     bgSkins: [
-      { key: 'kelp01', pngW: 694, pngH: 211 },
-      { key: 'kelp02', pngW: 713, pngH: 216 },
+      { key: 'kelp01', w: 350 },
+      { key: 'kelp02', w: 350 },
     ],
     fillSkins: [
-      { key: 'kelp03', pngW: 562, pngH: 253 },
-      { key: 'kelp04', pngW: 453, pngH: 191 },
-      { key: 'kelp05', pngW: 173, pngH: 220, scale: 1.5 },
-      { key: 'kelp06', pngW: 147, pngH: 309, scale: 2.25 },
-      { key: 'kelp07', pngW: 224, pngH: 165 },
-      { key: 'kelp08', pngW: 589, pngH: 164 },
-      { key: 'kelp09', pngW: 449, pngH: 191 },
-      { key: 'kelp10', pngW: 114, pngH: 190, scale: 1.5 },
+      { key: 'kelp03', w: 260 },
+      { key: 'kelp04', w: 260 },
+      { key: 'kelp05', w: 120 },
+      { key: 'kelp06', w: 120 },
+      { key: 'kelp07', w: 190 },
+      { key: 'kelp08', w: 340 },
+      { key: 'kelp09', w: 260 },
+      { key: 'kelp10', w:  70 },
     ],
   },
   {
@@ -148,18 +149,18 @@ export const BIOMES = [
     duration:  360,   // seconds (3 songs × 2 min)
     music:     ['midnightBGM01', 'midnightBGM02', 'midnightBGM03'],
     bgSkins: [
-      { key: 'midnight01', pngW: 371, pngH: 212 },
-      { key: 'midnight02', pngW: 382, pngH: 211 },
+      { key: 'midnight01', w: 350 },
+      { key: 'midnight02', w: 350 },
     ],
     fillSkins: [
-      { key: 'midnight03', pngW: 227, pngH: 128 },
-      { key: 'midnight04', pngW: 225, pngH: 101 },
-      { key: 'midnight05', pngW: 143, pngH: 135 },
-      { key: 'midnight06', pngW: 132, pngH: 137 },
-      { key: 'midnight07', pngW:  65, pngH: 138, scale: 2.25 },
-      { key: 'midnight08', pngW:  78, pngH: 109, scale: 1.5 },
-      { key: 'midnight09', pngW:  66, pngH: 117, scale: 1.5 },
-      { key: 'midnight10', pngW: 103, pngH:  85 },
+      { key: 'midnight03', w: 190 },
+      { key: 'midnight04', w: 260 },
+      { key: 'midnight05', w: 120 },
+      { key: 'midnight06', w: 120 },
+      { key: 'midnight07', w: 120 },
+      { key: 'midnight08', w: 120 },
+      { key: 'midnight09', w:  70 },
+      { key: 'midnight10', w: 120 },
     ],
   },
   {
@@ -177,17 +178,17 @@ export const BIOMES = [
     duration:  480,   // seconds (4 songs × 2 min), then loops
     music:     ['hadalBGM01', 'hadalBGM02', 'hadalBGM03', 'hadalBGM04'],
     bgSkins: [
-      { key: 'hadal01', pngW: 734, pngH: 226 },
-      { key: 'hadal02', pngW: 695, pngH: 202 },
+      { key: 'hadal01', w: 350 },
+      { key: 'hadal02', w: 350 },
     ],
     fillSkins: [
-      { key: 'hadal03', pngW: 205, pngH: 77  },
-      { key: 'hadal04', pngW: 189, pngH: 78  },
-      { key: 'hadal05', pngW: 151, pngH: 147 },
-      { key: 'hadal06', pngW: 160, pngH: 73  },
-      { key: 'hadal07', pngW: 163, pngH:  92 },
-      { key: 'hadal08', pngW: 116, pngH: 107 },
-      { key: 'hadal09', pngW:  88, pngH:  94 },
+      { key: 'hadal03', w: 260 },
+      { key: 'hadal04', w: 260 },
+      { key: 'hadal05', w: 120 },
+      { key: 'hadal06', w: 260 },
+      { key: 'hadal07', w: 190 },
+      { key: 'hadal08', w: 120 },
+      { key: 'hadal09', w:  70 },
     ],
   },
 ];

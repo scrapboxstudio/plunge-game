@@ -7,6 +7,21 @@ const STORAGE_COINS = 'plunge_coins';
 const NEON = { cyan: 0x0088bb, pink: 0xcc0077, green: 0x5a8800, gold: 0xddaa00, purple: 0x6611aa };
 const NC   = { cyan: '#0088bb', pink: '#cc0077', green: '#5a8800', gold: '#ddaa00', purple: '#6611aa' };
 
+const TIPS = [
+  'Gaps alternate sides — stay centered and react early.',
+  'Short taps give finer control than holding the button.',
+  'Your pressure bar heals slowly when you stop hitting walls.',
+  'Shells grant brief invincibility — use them to push through tight spots.',
+  'The deeper you go, the faster walls move. Small corrections beat big swings.',
+  'Coins spawn in clusters — stay on the same side of the screen to collect them.',
+  'Your diver leans toward your direction of movement. Use the tilt to predict your path.',
+  'Each biome shifts wall speed and gap width — adjust your rhythm as you descend.',
+  'Collected a shell? Dive straight through a cluster and don\'t waste the invincibility.',
+  'Lives carry over between runs. Spend them wisely.',
+  'The gap center drifts left and right — watch the walls, not the diver.',
+  'Pressure recovers the moment you stop hitting walls. Even a second of clean diving helps.',
+];
+
 export default class GameOver extends Phaser.Scene {
   constructor() { super('GameOver'); }
 
@@ -118,6 +133,18 @@ export default class GameOver extends Phaser.Scene {
     this.add.text(W / 2, H * 0.555, `${best}m`, {
       fontSize: '36px', fontFamily: 'Arial Black',
       color: isNew ? NC.gold : '#5a6a7a', stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5);
+
+    // ── TIP ───────────────────────────────────────────────────────────────────
+    this.add.rectangle(W / 2, H * 0.605, W * 0.72, 1, NEON.cyan, 0.15);
+    this.add.text(W / 2, H * 0.625, 'TIP', {
+      fontSize: '10px', fontFamily: 'Arial Black',
+      color: NC.cyan, stroke: '#000', strokeThickness: 2,
+    }).setOrigin(0.5);
+    this.add.text(W / 2, H * 0.657, Phaser.Utils.Array.GetRandom(TIPS), {
+      fontSize: '13px', fontFamily: 'Arial',
+      color: '#556677', stroke: '#000', strokeThickness: 1,
+      wordWrap: { width: W * 0.78 }, align: 'center',
     }).setOrigin(0.5);
 
     // ── BUTTONS ───────────────────────────────────────────────────────────────

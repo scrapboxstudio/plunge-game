@@ -21,6 +21,21 @@ const STORAGE_MUTE_MUSIC = 'plunge_mute_music';
 const STORAGE_MUTE_SFX   = 'plunge_mute_sfx';
 const STORAGE_TRAIL      = 'plunge_particle_trail';
 
+const TIPS = [
+  'Gaps alternate sides — stay centered and react early.',
+  'Short taps give finer control than holding the button.',
+  'Your pressure bar heals slowly when you stop hitting walls.',
+  'Shells grant brief invincibility — use them to push through tight spots.',
+  'The deeper you go, the faster walls move. Small corrections beat big swings.',
+  'Coins spawn in clusters — stay on the same side of the screen to collect them.',
+  'Your diver leans toward your direction of movement. Use the tilt to predict your path.',
+  'Each biome shifts wall speed and gap width — adjust your rhythm as you descend.',
+  'Collected a shell? Dive straight through a cluster and don\'t waste the invincibility.',
+  'Lives carry over between runs. Spend them wisely.',
+  'The gap center drifts left and right — watch the walls, not the diver.',
+  'Pressure recovers the moment you stop hitting walls. Even a second of clean diving helps.',
+];
+
 function _readVol(key, def) {
   const v = parseFloat(localStorage.getItem(key));
   return (isNaN(v) || v < 0 || v > 1) ? def : v;
@@ -479,11 +494,11 @@ export default class Game extends Phaser.Scene {
         // Landmark sprite at natural wallH height.
         // Left zone: right edge of sprite = x2 (gap edge) → extends off screen left.
         // Right zone: left edge of sprite = x1 (gap edge) → extends off screen right.
-        const skin = Phaser.Utils.Array.GetRandom(bgPool);
-        const natW = skin.pngW * (WALL_H / skin.pngH);
-        const imgX = isLeft ? x2 - natW / 2 : x1 + natW / 2;
-        const img  = this.add.image(imgX, spawnY, skin.key)
-          .setDisplaySize(natW, WALL_H)
+        const skin  = Phaser.Utils.Array.GetRandom(bgPool);
+        const dispW = skin.w;
+        const imgX  = isLeft ? x2 - dispW / 2 : x1 + dispW / 2;
+        const img   = this.add.image(imgX, spawnY, skin.key)
+          .setDisplaySize(dispW, WALL_H)
           .setFlipX(Math.random() < 0.5)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(6);
@@ -567,8 +582,7 @@ export default class Game extends Phaser.Scene {
       rect.setData('velY', velY);
     }
 
-    // Natural width at wall height, with optional per-sprite scale boost for small sprites.
-    const natW = sk => sk.pngW * (wallH / sk.pngH) * (sk.scale || 1);
+    const natW = sk => sk.w;
 
     // Exclude skins whose natural width is more than 2× the zone — those would scale
     // down below 50% height and look tiny. Fall back to full list if all are too wide.
@@ -591,13 +605,11 @@ export default class Game extends Phaser.Scene {
 
     let cursor = x1;
     picked.forEach((skin, i) => {
-      const useAdj = adj;
-      const dispW  = natWs[i] * useAdj;
-      const dispH  = wallH    * useAdj;
-      const sx     = cursor + dispW / 2;
+      const dispW = natWs[i] * adj;
+      const sx    = cursor + dispW / 2;
 
       const img = this.add.image(sx, cy, skin.key)
-        .setDisplaySize(dispW, dispH)
+        .setDisplaySize(dispW, wallH)
         .setFlipX(Math.random() < 0.5)
         .setBlendMode(Phaser.BlendModes.ADD)
         .setDepth(addPhysics ? 6 : 7);
@@ -912,6 +924,7 @@ export default class Game extends Phaser.Scene {
   _showContinue() {
     this.lives = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
     this._updateContinueLives();
+    this.contTipTxt.setText('tip: ' + Phaser.Utils.Array.GetRandom(TIPS));
     this.contObjs.forEach(o => o.setVisible(true));
     this.contCountdown = 10;
     this.contTxt.setText('10');
@@ -1383,14 +1396,7 @@ export default class Game extends Phaser.Scene {
     }
   }
 
-  _initBgAnimations() {
-    this.bgLayers.forEach((layer, i) => {
-      // Gentle horizontal sway
-      this.tweens.add({ targets: layer, x: W / 2 + 16, yoyo: true, repeat: -1, duration: 5500 + i * 700, ease: 'Sine.InOut' });
-      // Slow vertical drift
-      this.tweens.add({ targets: layer, y: H / 2 + 12, yoyo: true, repeat: -1, duration: 6200 + i * 300, ease: 'Sine.InOut' });
-    });
-  }
+  _initBgAnimations() {}
 
   _initAmbientBubbles() {
     this.ambients = [];
@@ -1848,30 +1854,44 @@ export default class Game extends Phaser.Scene {
     const cx = W / 2;
     const bg = this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.90).setDepth(d);
 
-    const title = this.add.text(cx, H * 0.17, 'CONTINUE?', {
+    // Tip bar — spans full width, ~9% headspace above it
+    const tipBarY   = H * 0.130;
+    const tipBar    = this.add.rectangle(cx, tipBarY, W, 72, 0x000d1a, 0.92).setDepth(d + 1);
+    const tipLine1  = this.add.rectangle(cx, tipBarY - 36, W, 1, 0x0088bb, 0.4).setDepth(d + 1);
+    const tipLine2  = this.add.rectangle(cx, tipBarY + 36, W, 1, 0x0088bb, 0.4).setDepth(d + 1);
+    this.contTipTxt = this.add.text(cx, tipBarY, '', {
+      fontSize: '13px', fontFamily: 'Arial',
+      color: '#8899aa', stroke: '#000', strokeThickness: 1,
+      wordWrap: { width: W * 0.88 }, align: 'center',
+    }).setOrigin(0.5).setDepth(d + 2);
+
+    // ~60px clear gap after tip bar
+    const title = this.add.text(cx, H * 0.245, 'CONTINUE?', {
       fontSize: '46px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#fff', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(d + 1);
 
-    this.contTxt = this.add.text(cx, H * 0.31, '10', {
+    // Countdown — hero element, sits in the visual center
+    this.contTxt = this.add.text(cx, H * 0.370, '10', {
       fontSize: '72px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#000', strokeThickness: 5,
     }).setOrigin(0.5).setDepth(d + 1);
 
-    const secLbl = this.add.text(cx, H * 0.415, 'seconds remaining', {
+    const secLbl = this.add.text(cx, H * 0.452, 'seconds remaining', {
       fontSize: '13px', fontFamily: 'Arial', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d + 1);
 
+    // Section break before action buttons
     // Lives available display — refreshed in _showContinue()
-    this.contLivesLbl = this.add.text(cx, H * 0.498, '', {
+    this.contLivesLbl = this.add.text(cx, H * 0.530, '', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#cc0077',
     }).setOrigin(0.5).setDepth(d + 1);
 
     // Use Life button — pink neon, disabled when lives = 0
-    this.useLifeBtn = this.add.rectangle(cx, H * 0.545, 280, 52, 0x110010)
+    this.useLifeBtn = this.add.rectangle(cx, H * 0.610, 280, 52, 0x110010)
       .setStrokeStyle(1.5, 0xcc0077, 0.8)
       .setDepth(d + 1).setInteractive({ useHandCursor: true });
-    this.useLifeTxt = this.add.text(cx, H * 0.545, 'USE A LIFE', {
+    this.useLifeTxt = this.add.text(cx, H * 0.610, 'USE A LIFE', {
       fontSize: '22px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(d + 2);
@@ -1880,14 +1900,14 @@ export default class Game extends Phaser.Scene {
     this.useLifeBtn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._useLife(); });
 
     // Watch Ad button — green neon (free action)
-    const adBtns = this._makeBtn(cx, H * 0.638, 'WATCH AD  —  FREE', 280, 52, 0x001100, 0x88bb00, 20, d + 1,
+    const adBtns = this._makeBtn(cx, H * 0.700, 'WATCH AD  —  FREE', 280, 52, 0x001100, 0x88bb00, 20, d + 1,
       () => this._watchAd());
 
-    const buyHintTxt = this.add.text(cx, H * 0.718, 'Buy lives from the store before diving', {
+    const buyHintTxt = this.add.text(cx, H * 0.768, 'Buy lives from the store before diving', {
       fontSize: '13px', fontFamily: 'Arial', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d + 1);
 
-    const giveUpBtns = this._makeBtn(cx, H * 0.820, '✕  GIVE UP', 200, 44, 0x100000, 0x882222, 18, d + 1,
+    const giveUpBtns = this._makeBtn(cx, H * 0.855, '✕  GIVE UP', 200, 44, 0x100000, 0x882222, 18, d + 1,
       () => {
         this.contEvt?.remove();
         const prev = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
@@ -1897,7 +1917,8 @@ export default class Game extends Phaser.Scene {
         this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
       });
 
-    this.contObjs = [bg, title, this.contTxt, secLbl, this.contLivesLbl,
+    this.contObjs = [bg, tipBar, tipLine1, tipLine2, this.contTipTxt,
+      title, this.contTxt, secLbl, this.contLivesLbl,
       this.useLifeBtn, this.useLifeTxt, ...adBtns, buyHintTxt, ...giveUpBtns];
     this.contObjs.forEach(o => o.setVisible(false));
   }

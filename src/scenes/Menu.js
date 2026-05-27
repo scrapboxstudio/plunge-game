@@ -159,6 +159,14 @@ export default class Menu extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5);
 
+    if (hasBest) {
+      const biomeName = ([...BIOMES].reverse().find(b => best >= b.minDepth) ?? BIOMES[0]).name;
+      this.add.text(W / 2, centerY + 34, `▼  ${biomeName.toUpperCase()}  ▼`, {
+        fontSize: '12px', fontFamily: 'Arial Black',
+        color: NC.green, stroke: '#000', strokeThickness: 2,
+      }).setOrigin(0.5);
+    }
+
     this._drawWobblyCircle(W / 2, centerY, 62);
   }
 
