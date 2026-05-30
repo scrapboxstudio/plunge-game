@@ -1,10 +1,11 @@
 import { W, H, BIOMES } from '../main.js';
 import {
-  SKINS, TRAILS, OBJ_SKINS, BG_SKINS,
+  PLAYER_SPRITES, SKINS, TRAILS, THEMES, BG_IMAGES,
+  STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
   STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
   STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
-  STORAGE_ACTIVE_OBJ_SKIN, STORAGE_OWNED_OBJ_SKINS,
-  STORAGE_ACTIVE_BG, STORAGE_OWNED_BGS,
+  STORAGE_ACTIVE_THEME, STORAGE_OWNED_THEMES,
+  STORAGE_ACTIVE_BG_IMAGE, STORAGE_OWNED_BG_IMAGES,
 } from '../config/cosmetics.js';
 
 const STORAGE_BEST       = 'plunge_best';
@@ -55,6 +56,12 @@ export default class Menu extends Phaser.Scene {
 
     // ── BEST SCORE ────────────────────────────────────────────────────────────
     this._buildBestDepth(H * 0.400);
+
+    // ── COIN BALANCE ──────────────────────────────────────────────────────────
+    const initCoins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    this._menuCoinTxt = this.add.text(W / 2, H * 0.478, `⬡ ${initCoins.toLocaleString()} coins`, {
+      fontSize: '16px', fontFamily: 'Arial', color: '#44350a',
+    }).setOrigin(0.5);
 
     // ── BUTTONS ───────────────────────────────────────────────────────────────
     this._buildPlayButton(H * 0.575);
@@ -252,10 +259,11 @@ export default class Menu extends Phaser.Scene {
     // Each entry drives _buildStoreCosmeticPage, _handleCosmeticAction, _refreshCosmeticCards
     // and _navTo / _closeStore generically. Add a new cosmetic category here — no other changes needed.
     this._cosmeticPages = [
-      { route: 'cosmetics_player',    title: 'PLAYER SKINS', data: SKINS,     ownedKey: STORAGE_OWNED_SKINS,     activeKey: STORAGE_ACTIVE_SKIN     },
-      { route: 'cosmetics_particles', title: 'PARTICLES',    data: TRAILS,    ownedKey: STORAGE_OWNED_TRAILS,    activeKey: STORAGE_ACTIVE_TRAIL    },
-      { route: 'cosmetics_obj_skin',  title: 'OBJECT SKINS', data: OBJ_SKINS, ownedKey: STORAGE_OWNED_OBJ_SKINS, activeKey: STORAGE_ACTIVE_OBJ_SKIN },
-      { route: 'cosmetics_bg',        title: 'BACKGROUNDS',  data: BG_SKINS,  ownedKey: STORAGE_OWNED_BGS,       activeKey: STORAGE_ACTIVE_BG       },
+      { route: 'cosmetics_sprite', title: 'PLAYER SKINS', data: PLAYER_SPRITES, ownedKey: STORAGE_OWNED_SPRITES,   activeKey: STORAGE_ACTIVE_SPRITE   },
+      { route: 'cosmetics_player', title: 'AURA',         data: SKINS,          ownedKey: STORAGE_OWNED_SKINS,     activeKey: STORAGE_ACTIVE_SKIN     },
+      { route: 'cosmetics_particles', title: 'PARTICLES', data: TRAILS,         ownedKey: STORAGE_OWNED_TRAILS,    activeKey: STORAGE_ACTIVE_TRAIL    },
+      { route: 'cosmetics_theme',  title: 'THEMES',       data: THEMES,         ownedKey: STORAGE_OWNED_THEMES,    activeKey: STORAGE_ACTIVE_THEME    },
+      { route: 'cosmetics_bg',     title: 'BACKGROUNDS',  data: BG_IMAGES,      ownedKey: STORAGE_OWNED_BG_IMAGES, activeKey: STORAGE_ACTIVE_BG_IMAGE },
     ];
     this._cosmeticPages.forEach(p => this._buildStoreCosmeticPage(d + 1, oy, oh, cw, cx, p));
   }
@@ -305,7 +313,7 @@ export default class Menu extends Phaser.Scene {
         fill:    0x0a0018,
         icon:    '✦',
         title:   'COSMETICS',
-        sub:     'Skins · Backgrounds · Music · Mystery',
+        sub:     'Skins · Aura · Particles · Themes · Backgrounds',
         action:  () => this._navTo('cosmetics'),
       },
     ];
@@ -406,8 +414,7 @@ export default class Menu extends Phaser.Scene {
         const cur = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
         const updated = cur + pkg.coins;
         localStorage.setItem(STORAGE_COINS, updated);
-        this._coinsPageBalTxt.setText(`Your balance:  ⬡ ${updated.toLocaleString()}`);
-        this._storeMainCoinTxt?.setText(`⬡ ${updated.toLocaleString()}  coins`);
+        this._refreshAllCoinTxt(updated);
         this._coinsPageFeedback.setText(`+${pkg.coins} coins added!`);
         this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
       });
@@ -494,12 +501,14 @@ export default class Menu extends Phaser.Scene {
     mk(this.add.rectangle(cx, oy + 136, cw - 40, 1, 0x6611aa, 0.15).setDepth(d).setVisible(false));
 
     const cats = [
-      { icon: '🤿', label: 'Player Skins',  sub: 'Change your diver',        action: () => this._navTo('cosmetics_player')    },
+      { icon: '🐟', label: 'Player Skins',  sub: 'Choose your creature',     action: () => this._navTo('cosmetics_sprite')    },
+      { icon: '🤿', label: 'Aura',           sub: 'Change your diver colour', action: () => this._navTo('cosmetics_player')    },
       { icon: '✨', label: 'Particles',      sub: 'Buy trail effects',        action: () => this._navTo('cosmetics_particles') },
-      { icon: '🪸', label: 'Object Skins',  sub: 'Restyle the obstacles',    action: () => this._navTo('cosmetics_obj_skin') },
-      { icon: '🌊', label: 'Backgrounds',   sub: 'New biome visuals',        action: () => this._navTo('cosmetics_bg')       },
-      { icon: '🎵', label: 'Music',         sub: 'Swap the soundtrack',      action: null },
-      { icon: '🎁', label: 'Mystery Box',   sub: 'Random rare items',        action: null },
+      { icon: '🎨', label: 'Themes',         sub: 'Change the whole game vibe', action: () => this._navTo('cosmetics_theme')    },
+      { icon: '🌊', label: 'Backgrounds',   sub: 'Swap biome backdrops',     action: () => this._navTo('cosmetics_bg')       },
+      // TODO (post-launch): re-enable when implemented
+      // { icon: '🎵', label: 'Music',         sub: 'Swap the soundtrack',      action: null },
+      // { icon: '🎁', label: 'Mystery Box',   sub: 'Random rare items',        action: null },
     ];
 
     cats.forEach((cat, i) => {
@@ -563,17 +572,24 @@ export default class Menu extends Phaser.Scene {
     page.data.forEach((item, i) => {
       const py    = oy + 166 + i * 100;
       const cardW = cw - 32;
-      const isWhite = item.tint === 0xffffff;
+      const rcCol   = parseInt(item.rc.slice(1), 16);
+      const discCol = item.tint === 0xffffff ? rcCol : item.tint;
+      const isGrey  = discCol === 0xaaaaaa;
 
       const card = mk(this.add.rectangle(cx, py, cardW, 85, 0x0a0018)
         .setStrokeStyle(1, 0x6611aa, 0.40).setDepth(d).setVisible(false)
         .setInteractive({ useHandCursor: true }));
 
-      // SPRITE SWAP POINT — replace these two circles with this.add.image(..., item.spriteKey)
-      mk(this.add.circle(cx - cardW / 2 + 36, py, 25, item.tint, isWhite ? 0.45 : 0.85)
-        .setDepth(d + 1).setVisible(false));
-      mk(this.add.circle(cx - cardW / 2 + 36, py, 25, 0x000000, 0)
-        .setStrokeStyle(1.5, item.tint, isWhite ? 0.35 : 0.7).setDepth(d + 2).setVisible(false));
+      if (item.spriteKey) {
+        mk(this.add.image(cx - cardW / 2 + 36, py, item.spriteKey + 'Alive')
+          .setDisplaySize(50, 50).setBlendMode(Phaser.BlendModes.ADD)
+          .setDepth(d + 1).setVisible(false));
+      } else {
+        mk(this.add.circle(cx - cardW / 2 + 36, py, 25, discCol, isGrey ? 0.45 : 0.85)
+          .setDepth(d + 1).setVisible(false));
+        mk(this.add.circle(cx - cardW / 2 + 36, py, 25, 0x000000, 0)
+          .setStrokeStyle(1.5, discCol, isGrey ? 0.35 : 0.7).setDepth(d + 2).setVisible(false));
+      }
 
       mk(this.add.text(cx - cardW / 2 + 74, py - 18, item.name, {
         fontSize: '16px', fontFamily: 'Arial Black', color: '#cccccc',
@@ -584,7 +600,9 @@ export default class Menu extends Phaser.Scene {
         fontSize: '11px', fontFamily: 'Arial', color: '#445566',
       }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
 
-      mk(this.add.text(cx - cardW / 2 + 74, py + 19, item.rarity.toUpperCase(), {
+      mk(this.add.rectangle(cx - cardW / 2 + 68, py + 19, 7, 7, parseInt(item.rc.slice(1), 16))
+        .setAngle(45).setDepth(d + 2).setVisible(false));
+      mk(this.add.text(cx - cardW / 2 + 82, py + 19, item.rarity.toUpperCase(), {
         fontSize: '11px', fontFamily: 'Arial Black', color: item.rc,
       }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
 
@@ -626,8 +644,7 @@ export default class Menu extends Phaser.Scene {
     owned.push(item.key);
     localStorage.setItem(page.ownedKey, owned.join(','));
     localStorage.setItem(page.activeKey, item.key);
-    this._storeMainCoinTxt?.setText(`⬡ ${newCoins.toLocaleString()}  coins`);
-    page.coinTxt.setText(`Your balance:  ⬡ ${newCoins.toLocaleString()}`);
+    this._refreshAllCoinTxt(newCoins);
     page.msgTxt.setColor('#00cc77').setText(`${item.name} unlocked & equipped!`);
     this.time.delayedCall(2000, () => page.msgTxt?.setText(''));
     this._refreshCosmeticCards(page);
@@ -660,6 +677,16 @@ export default class Menu extends Phaser.Scene {
   }
 
   // ── STORE NAVIGATION ───────────────────────────────────────────────────────
+
+  _refreshAllCoinTxt(n) {
+    const s = n.toLocaleString();
+    this._menuCoinTxt?.setText(`⬡ ${s} coins`);
+    this._storeCoinBadge?.setText(`⬡ ${s}`);
+    this._storeMainCoinTxt?.setText(`⬡ ${s}  coins`);
+    this._coinsPageBalTxt?.setText(`Your balance:  ⬡ ${s}`);
+    this._livesCoinsDisplay?.setText(`⬡ ${s}  coins`);
+    this._cosmeticPages?.forEach(p => p.coinTxt?.setText(`Your balance:  ⬡ ${s}`));
+  }
 
   _navTo(page) {
     this._storeMainObjs.forEach(o => o.setVisible(false));
@@ -707,7 +734,7 @@ export default class Menu extends Phaser.Scene {
     const newLives  = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10) + lives;
     localStorage.setItem(STORAGE_COINS, newCoins);
     localStorage.setItem(STORAGE_LIVES,  newLives);
-    this._livesCoinsDisplay.setText(`⬡ ${newCoins.toLocaleString()}  coins`);
+    this._refreshAllCoinTxt(newCoins);
     this._livesDisplay.setText(`♥  ${newLives}  extra lives`);
     const msg = lives === 1 ? '♥ Life added!' : `♥ ${lives} Lives added!`;
     this._livesNotEnoughTxt.setColor('#00cc77').setText(msg);
@@ -733,6 +760,8 @@ export default class Menu extends Phaser.Scene {
   }
 
   _closeStore() {
+    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    this._menuCoinTxt?.setText(`⬡ ${coins.toLocaleString()} coins`);
     this._storeDim.setVisible(false);
     this._storePanel.setVisible(false);
     this._storeCoinBadge.setVisible(false);
@@ -930,7 +959,8 @@ export default class Menu extends Phaser.Scene {
 
     mk(this.add.rectangle(W / 2, H / 2, W, H, 0x000010).setAlpha(0.87).setDepth(d).setInteractive());
 
-    mk(this.add.image(W / 2, H * 0.42, 'diver')
+    const _activeSprKey = (PLAYER_SPRITES.find(s => s.key === (localStorage.getItem(STORAGE_ACTIVE_SPRITE) || 'default')) ?? PLAYER_SPRITES[0]).spriteKey;
+    mk(this.add.image(W / 2, H * 0.42, _activeSprKey + 'Alive')
       .setAlpha(0.07).setScale(2.6).setDepth(d + 1)
       .setBlendMode(Phaser.BlendModes.ADD));
 
@@ -1041,7 +1071,7 @@ export default class Menu extends Phaser.Scene {
   _spawnBgFish() {
     for (let i = 0; i < 4; i++) {
       const f = this.add.image(
-        Phaser.Math.Between(30, W - 30), Phaser.Math.Between(0, H), 'diver'
+        Phaser.Math.Between(30, W - 30), Phaser.Math.Between(0, H), 'fishAlive'
       ).setAlpha(Phaser.Math.FloatBetween(0.06, 0.11))
        .setScale(Phaser.Math.FloatBetween(0.55, 1.45))
        .setBlendMode(Phaser.BlendModes.ADD)

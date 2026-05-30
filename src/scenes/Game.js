@@ -5,11 +5,12 @@ import {
 } from '../main.js';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
-  SKINS, TRAILS, OBJ_SKINS, BG_SKINS, SKIN_TINTS,
+  PLAYER_SPRITES, SKINS, TRAILS, THEMES, BG_IMAGES, SKIN_TINTS,
+  STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
   STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
   STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
-  STORAGE_ACTIVE_OBJ_SKIN, STORAGE_OWNED_OBJ_SKINS,
-  STORAGE_ACTIVE_BG, STORAGE_OWNED_BGS,
+  STORAGE_ACTIVE_THEME, STORAGE_OWNED_THEMES,
+  STORAGE_ACTIVE_BG_IMAGE, STORAGE_OWNED_BG_IMAGES,
 } from '../config/cosmetics.js';
 
 const STORAGE_COINS      = 'plunge_coins';
@@ -19,7 +20,7 @@ const STORAGE_VOL_MUSIC  = 'plunge_vol_music';
 const STORAGE_VOL_SFX    = 'plunge_vol_sfx';
 const STORAGE_MUTE_MUSIC = 'plunge_mute_music';
 const STORAGE_MUTE_SFX   = 'plunge_mute_sfx';
-const STORAGE_TRAIL      = 'plunge_particle_trail';
+const STORAGE_COSMETICS  = 'plunge_cosmetics';
 
 const TIPS = [
   'Gaps alternate sides — stay centered and react early.',
@@ -50,6 +51,7 @@ function sfxVol() {
 const WALL_H    = 110;
 const FADE_MS   = 7000;  // biome crossfade — bg images, vignette, and music all use this
 
+
 export default class Game extends Phaser.Scene {
   constructor() { super('Game'); }
 
@@ -62,7 +64,7 @@ export default class Game extends Phaser.Scene {
     this._prevBest     = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
     this._newRecord    = false;
     this._lastGapCenter = undefined;  // used to alternate gap sides and force movement
-    this._recentSkins   = {};         // biomeIdx → recently-used skin keys (avoids repeats)       // elapsed ms (excludes pause/death), drives biome + music
+    this._recentSkins   = {};         // biomeIdx → recently-used skin keys (avoids repeats)
     this.pressure   = 0;       // 0.0 → 1.0 → death
     this.dead       = false;
     this.invincible = false;
@@ -71,11 +73,13 @@ export default class Game extends Phaser.Scene {
     this.gamePaused = false;
     this.coins        = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
     this.lives        = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
-    this._trailEnabled  = localStorage.getItem(STORAGE_TRAIL) !== '0';
-    this._activeObjSkin = localStorage.getItem(STORAGE_ACTIVE_OBJ_SKIN) || 'default';
-    this._activeBgSkin  = localStorage.getItem(STORAGE_ACTIVE_BG)       || 'default';
-    this._objSkinTint   = OBJ_SKINS.find(s => s.key === this._activeObjSkin)?.tint ?? 0xffffff;
-    this._bgSkinTint    = BG_SKINS.find(s => s.key === this._activeBgSkin)?.tint  ?? 0xffffff;
+    this._cosmeticsEnabled = localStorage.getItem(STORAGE_COSMETICS) !== '0';
+    this._activeBgImage    = localStorage.getItem(STORAGE_ACTIVE_BG_IMAGE) || 'default';
+    const _themeTint  = this._cosmeticsEnabled
+      ? (THEMES.find(t => t.key === (localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default'))?.tint ?? 0xffffff)
+      : 0xffffff;
+    this._objSkinTint = _themeTint;
+    this._bgSkinTint  = _themeTint;
 
     // Input flags
     this.steerLeft  = false;
@@ -87,6 +91,8 @@ export default class Game extends Phaser.Scene {
     this._shellsThisBiome     = 0;   // shells spawned in current biome/batch (max 1)
     this._nextShellIn         = this._shellSpawnDelay();
     this._hadalShellBatchDepth = 0;
+    this._warpSpeedMult       = 1;   // speed multiplier applied to all obstacle scrolling (>1 during shell warp)
+    this._warpTimeLeft        = 0;   // seconds of warp remaining
     this._shellInvincible     = false;
     this._invincibleSFX       = null;
 
@@ -133,7 +139,7 @@ export default class Game extends Phaser.Scene {
     // ── DIVER ────────────────────────────────────────────────────────────────
     // Fish image faces RIGHT — rotate 90° so nose points straight down by default.
     // BlendMode.ADD makes the black background invisible and neon colors glow.
-    this.diver = this.physics.add.image(W / 2, DIVER_Y, 'diver')
+    this.diver = this.physics.add.image(W / 2, DIVER_Y, 'fishAlive')
       .setDepth(10)
       .setCollideWorldBounds(false)
       .setDisplaySize(88, 88)
@@ -149,7 +155,7 @@ export default class Game extends Phaser.Scene {
       yoyo: true, repeat: -1, duration: 860, ease: 'Sine.InOut',
     });
 
-    this.diverGlow = this.add.circle(W / 2, DIVER_Y, 38, SKIN_TINTS[this._activeSkin] ?? 0x00eeff, 0.22)
+    this.diverGlow = this.add.circle(W / 2, DIVER_Y, 38, this._cosmeticsEnabled ? (SKIN_TINTS[this._activeSkin] ?? 0x00eeff) : 0xffffff, 0.22)
       .setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
     this.tweens.add({
       targets: this.diverGlow,
@@ -158,17 +164,19 @@ export default class Game extends Phaser.Scene {
     });
 
     // Dead sprite — same size/blend, hidden until hit or death
-    this.diverDead = this.add.image(W / 2, DIVER_Y, 'diverDead')
+    this.diverDead = this.add.image(W / 2, DIVER_Y, 'fishDead')
       .setDepth(11)
       .setDisplaySize(88, 88)
       .setBlendMode(Phaser.BlendModes.ADD)
       .setVisible(false);
 
-    // Apply active skin tint to both diver sprites
-    // SPRITE SWAP POINT — replace setTint() with setTexture(spriteKey) when real sprites are ready
-    this._activeSkin  = localStorage.getItem(STORAGE_ACTIVE_SKIN)  || 'default';
-    this._activeTrail = localStorage.getItem(STORAGE_ACTIVE_TRAIL) || 'default';
-    const _skinTint = SKIN_TINTS[this._activeSkin] ?? 0xffffff;
+    this._activeSprite = localStorage.getItem(STORAGE_ACTIVE_SPRITE) || 'default';
+    this._activeSkin   = localStorage.getItem(STORAGE_ACTIVE_SKIN)  || 'default';
+    this._activeTrail  = localStorage.getItem(STORAGE_ACTIVE_TRAIL) || 'default';
+    const { alive: _aliveKey, dead: _deadKey } = this._spriteTexKeys();
+    this.diver.setTexture(_aliveKey);
+    this.diverDead.setTexture(_deadKey);
+    const _skinTint = this._cosmeticsEnabled ? (SKIN_TINTS[this._activeSkin] ?? 0xffffff) : 0xffffff;
     this.diver.setTint(_skinTint);
     this.diverDead.setTint(_skinTint);
 
@@ -256,7 +264,7 @@ export default class Game extends Phaser.Scene {
     if (this.dead || this.gamePaused) return;
     this.gameTime += 120;
     this._updateEffectiveDifficulty();
-    this.depth   += Math.round(this._eff.fallSpeed / 38);
+    this.depth   += Math.round(this._eff.fallSpeed / 38 * this._warpSpeedMult);
     if (!this._newRecord && this._prevBest > 0 && this.depth > this._prevBest) {
       this._newRecord = true;
       this._onNewRecord();
@@ -652,7 +660,7 @@ export default class Game extends Phaser.Scene {
   }
 
   _spawnCoin(x, y, speed) {
-    const color = this._activeObjSkin !== 'default' ? this._objSkinTint : BIOMES[this.biomeIdx].obsColor;
+    const color = this._objSkinTint;
     const coin  = this.add.image(x, y, 'coinTex')
       .setTint(color)
       .setBlendMode(Phaser.BlendModes.ADD)
@@ -694,19 +702,24 @@ export default class Game extends Phaser.Scene {
     });
   }
 
+  _spriteTexKeys() {
+    const sp = PLAYER_SPRITES.find(s => s.key === this._activeSprite) ?? PLAYER_SPRITES[0];
+    return { alive: sp.spriteKey + 'Alive', dead: sp.spriteKey + 'Dead' };
+  }
+
   // ── SHELL (INVINCIBILITY) ─────────────────────────────────────────────────
 
   _shellSpawnDelay() {
-    // Shell appears in the middle third of each biome so it's reachable but earned.
-    // Coral:    97 rows  → Between(35, 60)
-    // Kelp:    194 rows  → Between(70, 120)
-    // Midnight: 329 rows → Between(120, 180)
-    // Hadal:   batch     → Between(40, 80) rows after batch reset
+    // Shell appears in the middle-to-late portion of each biome — rare and earned.
+    // Coral:    97 rows  → Between(60, 100)
+    // Kelp:    194 rows  → Between(110, 190)
+    // Midnight: 329 rows → Between(180, 280)
+    // Hadal:   batch     → Between(70, 130) rows after batch reset
     switch (this.biomeIdx) {
-      case 0:  return Phaser.Math.Between(35,  60);
-      case 1:  return Phaser.Math.Between(70,  120);
-      case 2:  return Phaser.Math.Between(120, 180);
-      default: return Phaser.Math.Between(40,  80);
+      case 0:  return Phaser.Math.Between(60,  100);
+      case 1:  return Phaser.Math.Between(110, 190);
+      case 2:  return Phaser.Math.Between(180, 280);
+      default: return Phaser.Math.Between(70,  130);
     }
   }
 
@@ -720,7 +733,7 @@ export default class Game extends Phaser.Scene {
     // Placement is fully random across the gap width — near the edges is
     // harder to collect without grazing a wall, near the centre is easier.
     const gap    = Phaser.Utils.Array.GetRandom(this._lastGaps);
-    const margin = 12;
+    const margin = 32;
     const lo     = gap.x1 + margin;
     const hi     = gap.x2 - margin;
     if (hi <= lo) return;
@@ -763,8 +776,9 @@ export default class Game extends Phaser.Scene {
     this._shellInvincible = true;
     this.invincible       = true;
 
-    // Camera flash + banner
-    this.cameras.main.flash(200, 180, 220, 255, false);
+    // Warp depth jump + visuals
+    this._doWarpEffect();
+
     const banner = this.add.text(W / 2, H * 0.38, 'PLATINUM SHELL!', {
       fontSize: '26px', fontFamily: 'Arial Black',
       color: '#bbddff', stroke: '#000', strokeThickness: 5,
@@ -800,6 +814,68 @@ export default class Game extends Phaser.Scene {
     });
 
     this.time.delayedCall(8000, () => this._endShellInvincible());
+  }
+
+  _doWarpEffect() {
+    // Activate warp: obstacles, coins, and decorations scroll at 7× speed for 1.5 s.
+    // Depth increments in _tick() also multiply by _warpSpeedMult, so ~500 m is gained
+    // naturally through the existing depth-per-tick system.
+    this._warpSpeedMult = 7;
+    this._warpTimeLeft  = 1.5;
+
+    // Full-screen platinum flash
+    this.cameras.main.flash(220, 180, 220, 255, false);
+
+    // Quick zoom-in then snap back — feels like a burst of speed
+    this.cameras.main.zoomTo(1.16, 110, 'Linear', true);
+    this.time.delayedCall(110, () => this.cameras.main.zoomTo(1.0, 420, 'Power2Out'));
+
+    // Biome shimmer burst
+    this.bgShimmer.setAlpha(0.50);
+    this.tweens.add({ targets: this.bgShimmer, alpha: 0, duration: 1200 });
+
+    // Vertical speed lines flying upward
+    for (let i = 0; i < 18; i++) {
+      const lx  = Phaser.Math.Between(8, W - 8);
+      const len = Phaser.Math.Between(40, 140);
+      const ln  = this.add.rectangle(
+        lx, Phaser.Math.Between(H * 0.1, H * 0.9), 1.5, len, 0xbbddff, 0.80
+      ).setDepth(45).setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({
+        targets: ln, y: ln.y - 480, alpha: 0,
+        duration: Phaser.Math.Between(120, 320),
+        onComplete: () => ln.destroy(),
+      });
+    }
+
+    // Diver afterimages stacked above (trailing behind as the diver rushes down)
+    for (let i = 1; i <= 6; i++) {
+      const ghost = this.add.image(this.diver.x, DIVER_Y - i * 20, this._spriteTexKeys().alive)
+        .setDisplaySize(88, 88)
+        .setFlipX(this.diver.flipX)
+        .setAngle(this.diver.angle)
+        .setTint(this._cosmeticsEnabled ? (SKIN_TINTS[this._activeSkin] ?? 0xffffff) : 0xffffff)
+        .setAlpha(0.50 - i * 0.07)
+        .setDepth(9)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      this.tweens.add({
+        targets: ghost, alpha: 0,
+        duration: 180 + i * 45,
+        onComplete: () => ghost.destroy(),
+      });
+    }
+
+    // "WARP!" pop, then depth gained shown when warp ends
+    const pop = this.add.text(W / 2, H * 0.48, 'WARP!', {
+      fontSize: '36px', fontFamily: 'Arial Black',
+      color: '#bbddff', stroke: '#000000', strokeThickness: 6,
+    }).setOrigin(0.5).setDepth(45).setAlpha(0).setScale(0.4);
+    this.tweens.add({
+      targets: pop, alpha: 1, scaleX: 1.1, scaleY: 1.1, duration: 200, ease: 'Back.Out',
+      onComplete: () => this.time.delayedCall(1000, () =>
+        this.tweens.add({ targets: pop, alpha: 0, y: pop.y - 55, duration: 450,
+          onComplete: () => pop.destroy() })),
+    });
   }
 
   _endShellInvincible() {
@@ -1042,6 +1118,13 @@ export default class Game extends Phaser.Scene {
     this.livesTxt.setText(this.lives > 0 ? `♥ ${this.lives}` : '');
   }
 
+  _updateCosmeticToggleUI() {
+    const on = this._cosmeticsEnabled;
+    this._cosmeticToggleBg?.setFillStyle(on ? 0x001122 : 0x111111)
+      .setStrokeStyle(1.5, on ? 0x0088bb : 0x334455, on ? 0.8 : 0.5);
+    this._cosmeticToggleTxt?.setText(on ? 'ON' : 'OFF').setColor(on ? '#00ccff' : '#334455');
+  }
+
   _updateContinueLives() {
     if (!this.contLivesLbl) return;
     const l = this.lives;
@@ -1062,6 +1145,7 @@ export default class Game extends Phaser.Scene {
       this.scene.start('GameOver', {
         depth: this.depth,
         biome: BIOMES[this.biomeIdx].name,
+        spriteAliveKey: this._spriteTexKeys().alive,
       });
     });
   }
@@ -1147,7 +1231,7 @@ export default class Game extends Phaser.Scene {
 
     // ── PARTICLE TRAIL ────────────────────────────────────────────
     this.trailTimer += delta;
-    if (this._trailEnabled && this.trailTimer > 80) {
+    if (this._cosmeticsEnabled && this.trailTimer > 80) {
       this.trailTimer = 0;
       // Tail position: offset from diver center toward the back end of the fish
       const angleRad = Phaser.Math.DegToRad(this.diver.angle);
@@ -1179,7 +1263,11 @@ export default class Game extends Phaser.Scene {
     });
 
     // ── GRID PARALLAX ─────────────────────────────────────────────
-    this.gridTile.tilePositionY -= this._eff.fallSpeed * dt * 0.22;
+    if (this._warpTimeLeft > 0) {
+      this._warpTimeLeft = Math.max(0, this._warpTimeLeft - dt);
+      if (this._warpTimeLeft <= 0) this._warpSpeedMult = 1;
+    }
+    this.gridTile.tilePositionY -= this._eff.fallSpeed * dt * 0.22 * this._warpSpeedMult;
 
     // ── DAMAGE BAR ───────────────────────────────────────────────
     const pct = Phaser.Math.Clamp(this.pressure, 0, 1);
@@ -1207,7 +1295,7 @@ export default class Game extends Phaser.Scene {
     group.getChildren().forEach(child => {
       const velY = child.getData('velY');
       if (velY !== undefined) {
-        child.y += velY * dt;
+        child.y += velY * dt * this._warpSpeedMult;
         if (child.body) child.body.reset(child.x, child.y);
       }
       if (child.y < -200) toDestroy.push(child);
@@ -1219,7 +1307,7 @@ export default class Game extends Phaser.Scene {
     this.decorations = this.decorations.filter(entry => {
       const obj = entry.obj;
       if (!obj || !obj.active) return false;
-      obj.y += (obj.getData('velY') || 0) * dt;
+      obj.y += (obj.getData('velY') || 0) * dt * this._warpSpeedMult;
       if (obj.body) obj.body.reset(obj.x, obj.y);
       if (obj.y < -200) { obj.destroy(); return false; }
       return true;
@@ -1244,7 +1332,7 @@ export default class Game extends Phaser.Scene {
     const bub = this.add.circle(
       x + Phaser.Math.Between(-5, 5),
       y + Phaser.Math.Between(0, 8),
-      r, 0xaaddff, 0.6
+      r, 0xffffff, 0.6
     ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
     this.trail.push({ img: bub, life: 1.0, velX: Phaser.Math.Between(-8, 8), velY: -28, decay: 1.4, maxAlpha: 0.35 });
   }
@@ -1526,35 +1614,56 @@ export default class Game extends Phaser.Scene {
     this._buildPauseSlider(mk, cx, H * 0.57, d + 1, '🔊  SFX',
       STORAGE_VOL_SFX, STORAGE_MUTE_SFX, 0.7, () => {});
 
-    // ── PARTICLE TRAIL TOGGLE ─────────────────────────────────────
+    // ── COSMETICS TOGGLE ──────────────────────────────────────────
     const trkW  = W - 100;
     const trkL  = cx - trkW / 2;
     const trkR  = cx + trkW / 2;
     const trlY  = H * 0.678;
 
-    mk(this.add.text(trkL, trlY, '✦  PARTICLE TRAIL', {
+    mk(this.add.text(trkL, trlY, '✦  COSMETICS', {
       fontSize: '16px', fontFamily: 'Arial Black', color: '#6688aa',
     }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
 
-    const trlBg = mk(this.add.rectangle(trkR - 40, trlY, 82, 34,
-      this._trailEnabled ? 0x001122 : 0x111111)
-      .setStrokeStyle(1.5, this._trailEnabled ? 0x0088bb : 0x334455, this._trailEnabled ? 0.8 : 0.5)
+    this._cosmeticToggleBg = mk(this.add.rectangle(trkR - 40, trlY, 82, 34,
+      this._cosmeticsEnabled ? 0x001122 : 0x111111)
+      .setStrokeStyle(1.5, this._cosmeticsEnabled ? 0x0088bb : 0x334455, this._cosmeticsEnabled ? 0.8 : 0.5)
       .setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
 
-    const trlTxt = mk(this.add.text(trkR - 40, trlY, this._trailEnabled ? 'ON' : 'OFF', {
+    this._cosmeticToggleTxt = mk(this.add.text(trkR - 40, trlY, this._cosmeticsEnabled ? 'ON' : 'OFF', {
       fontSize: '15px', fontFamily: 'Arial Black',
-      color: this._trailEnabled ? '#00ccff' : '#334455',
+      color: this._cosmeticsEnabled ? '#00ccff' : '#334455',
     }).setOrigin(0.5).setDepth(d + 2).setVisible(false));
 
-    trlBg.on('pointerdown', () => {
+    this._cosmeticToggleBg.on('pointerdown', () => {
       if (!this.gamePaused) return;
-      this._trailEnabled = !this._trailEnabled;
-      localStorage.setItem(STORAGE_TRAIL, this._trailEnabled ? '1' : '0');
-      trlBg.setFillStyle(this._trailEnabled ? 0x001122 : 0x111111);
-      trlBg.setStrokeStyle(1.5, this._trailEnabled ? 0x0088bb : 0x334455, this._trailEnabled ? 0.8 : 0.5);
-      trlTxt.setText(this._trailEnabled ? 'ON' : 'OFF')
-        .setColor(this._trailEnabled ? '#00ccff' : '#334455');
+      this._cosmeticsEnabled = !this._cosmeticsEnabled;
+      localStorage.setItem(STORAGE_COSMETICS, this._cosmeticsEnabled ? '1' : '0');
+      this._updateCosmeticToggleUI();
+
+      if (this._cosmeticsEnabled) {
+        // Restore saved cosmetics (sprite and bg image unaffected)
+        const skinT = SKIN_TINTS[this._activeSkin] ?? 0xffffff;
+        this.diver.setTint(skinT);
+        this.diverDead.setTint(skinT);
+        this.diverGlow.setFillStyle(skinT, 0.22);
+        const themeKey = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
+        const themeT = THEMES.find(t => t.key === themeKey)?.tint ?? 0xffffff;
+        this._objSkinTint = themeT;
+        this._bgSkinTint  = themeT;
+        this.bgLayers.forEach(l => l.setTint(themeT));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(themeT); });
+      } else {
+        // Revert all cosmetics to default (sprite and bg image unchanged)
+        this.diver.setTint(0xffffff);
+        this.diverDead.setTint(0xffffff);
+        this.diverGlow.setFillStyle(0xffffff, 0.22);
+        this._objSkinTint = 0xffffff;
+        this._bgSkinTint  = 0xffffff;
+        this.bgLayers.forEach(l => l.setTint(0xffffff));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(0xffffff); });
+      }
     });
+
 
     // ── CUSTOMIZE ─────────────────────────────────────────────────
     mk(this.add.rectangle(cx, H * 0.770, W * 0.80, 1, 0x445566, 0.18).setDepth(d).setVisible(false));
@@ -1573,7 +1682,7 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
     backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
     backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
-    backBtn.on('pointerdown', () => objs.forEach(o => o.setVisible(false)));
+    backBtn.on('pointerdown', () => { this._sfx.button?.stop(); this._sfx.button?.play(); objs.forEach(o => o.setVisible(false)); });
 
     this.pauseSettingsObjs = objs;
     this.pauseSettingsObjs.forEach(o => o.setVisible(false));
@@ -1599,13 +1708,15 @@ export default class Game extends Phaser.Scene {
     mkC(this.add.rectangle(cx, H * 0.158, W * 0.80, 1, 0x6611aa, 0.20).setDepth(d + 1));
 
     const catDefs = [
-      { icon: '🤿', label: 'PLAYER SKINS', storageKey: STORAGE_ACTIVE_SKIN,     data: SKINS     },
-      { icon: '✨', label: 'PARTICLES',     storageKey: STORAGE_ACTIVE_TRAIL,    data: TRAILS    },
-      { icon: '🪸', label: 'OBJECTS',       storageKey: STORAGE_ACTIVE_OBJ_SKIN, data: OBJ_SKINS },
-      { icon: '🌊', label: 'BACKGROUNDS',   storageKey: STORAGE_ACTIVE_BG,       data: BG_SKINS  },
+      { icon: '🐟', label: 'PLAYER SKINS', storageKey: STORAGE_ACTIVE_SPRITE,   data: PLAYER_SPRITES },
+      { icon: '🤿', label: 'AURA',          storageKey: STORAGE_ACTIVE_SKIN,     data: SKINS          },
+      { icon: '✨', label: 'PARTICLES',     storageKey: STORAGE_ACTIVE_TRAIL,    data: TRAILS         },
+      { icon: '🎨', label: 'THEMES',         storageKey: STORAGE_ACTIVE_THEME,    data: THEMES         },
+      { icon: '🌊', label: 'BACKGROUNDS',   storageKey: STORAGE_ACTIVE_BG_IMAGE, data: BG_IMAGES      },
     ];
-    const pageKeys = ['skin', 'trail', 'obj', 'bg'];
+    const pageKeys = ['sprite', 'skin', 'trail', 'theme', 'bg'];
 
+    this._pauseCatNameTxts = [];
     catDefs.forEach((cat, i) => {
       const py = H * 0.255 + i * 98;
       const card = mkC(this.add.rectangle(cx, py, cardW, 82, 0x0a0018)
@@ -1618,15 +1729,16 @@ export default class Game extends Phaser.Scene {
       }).setOrigin(0, 0.5).setDepth(d + 2));
       const activeKey = localStorage.getItem(cat.storageKey) || 'default';
       const activeName = cat.data.find(s => s.key === activeKey)?.name ?? 'DEFAULT';
-      mkC(this.add.text(cx - cardW / 2 + 62, py + 12, activeName, {
+      const activeNameTxt = mkC(this.add.text(cx - cardW / 2 + 62, py + 12, activeName, {
         fontSize: '12px', fontFamily: 'Arial', color: '#445566',
       }).setOrigin(0, 0.5).setDepth(d + 2));
+      this._pauseCatNameTxts.push({ txt: activeNameTxt, cat });
       mkC(this.add.text(cx + cardW / 2 - 14, py, '›', {
         fontSize: '28px', fontFamily: 'Arial Black', color: '#9944dd',
       }).setOrigin(1, 0.5).setDepth(d + 2));
       card.on('pointerover', () => card.setStrokeStyle(2, 0x9944dd, 0.8));
       card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
-      card.on('pointerdown', () => { if (this.gamePaused) this._pauseCustNav?.(pageKeys[i]); });
+      card.on('pointerdown', () => { if (!this.gamePaused) return; this._sfx.button?.stop(); this._sfx.button?.play(); this._pauseCustNav?.(pageKeys[i]); });
     });
 
     const catBack = mkC(this.add.text(cx, H * 0.895, '‹  BACK', {
@@ -1635,52 +1747,73 @@ export default class Game extends Phaser.Scene {
     catBack.on('pointerover', () => catBack.setColor('#6688aa'));
     catBack.on('pointerout',  () => catBack.setColor('#2a3a44'));
     catBack.on('pointerdown', () => {
+      this._sfx.button?.stop(); this._sfx.button?.play();
       catObjs.forEach(o => o.setVisible(false));
       this.pauseSettingsObjs.forEach(o => o.setVisible(true));
     });
 
     // ── SUB-PANELS ────────────────────────────────────────────────────────────
-    const skinPanel  = this._buildCosmeticSubPanel(d, push, '🤿  PLAYER SKINS',
+    const spritePanel = this._buildCosmeticSubPanel(d, push, '🐟  PLAYER SKINS',
+      PLAYER_SPRITES, STORAGE_OWNED_SPRITES, STORAGE_ACTIVE_SPRITE, s => s.tint,
+      item => {
+        this._activeSprite = item.key;
+        const { alive, dead } = this._spriteTexKeys();
+        this.diver.setTexture(alive);
+        this.diverDead.setTexture(dead);
+      });
+
+    const skinPanel  = this._buildCosmeticSubPanel(d, push, '🤿  AURA',
       SKINS,     STORAGE_OWNED_SKINS,     STORAGE_ACTIVE_SKIN,     s => s.tint,
       item => {
         this._activeSkin = item.key;
         const t = SKIN_TINTS[item.key] ?? 0xffffff;
-        // SPRITE SWAP POINT — replace setTint() with setTexture(item.spriteKey) when real sprites are ready
         this.diver.setTint(t); this.diverDead.setTint(t); this.diverGlow.setFillStyle(t, 0.22);
+        this._cosmeticsEnabled = true;
+        localStorage.setItem(STORAGE_COSMETICS, '1');
+        this._updateCosmeticToggleUI();
       });
 
     const trailPanel = this._buildCosmeticSubPanel(d, push, '✨  PARTICLES',
       TRAILS,    STORAGE_OWNED_TRAILS,    STORAGE_ACTIVE_TRAIL,    s => s.tint,
-      item => { this._activeTrail = item.key; });
-
-    const objPanel   = this._buildCosmeticSubPanel(d, push, '🪸  OBJECTS',
-      OBJ_SKINS, STORAGE_OWNED_OBJ_SKINS, STORAGE_ACTIVE_OBJ_SKIN, s => s.tint,
       item => {
-        this._activeObjSkin = item.key;
-        this._objSkinTint   = item.tint;
-        // SPRITE SWAP POINT — apply new obj skin tint to active walls/decorations
+        this._activeTrail = item.key;
+        this._cosmeticsEnabled = true;
+        localStorage.setItem(STORAGE_COSMETICS, '1');
+        this._updateCosmeticToggleUI();
       });
 
-    const bgPanel    = this._buildCosmeticSubPanel(d, push, '🌊  BACKGROUNDS',
-      BG_SKINS,  STORAGE_OWNED_BGS,       STORAGE_ACTIVE_BG,       s => s.tint,
+    const themePanel  = this._buildCosmeticSubPanel(d, push, '🎨  THEMES',
+      THEMES,    STORAGE_OWNED_THEMES,    STORAGE_ACTIVE_THEME,    s => s.tint,
       item => {
-        this._activeBgSkin = item.key;
-        this._bgSkinTint   = item.tint;
-        // SPRITE SWAP POINT — replace setTint() with setTexture() for bg layer sprites
+        this._objSkinTint = item.tint;
+        this._bgSkinTint  = item.tint;
         this.bgLayers.forEach(l => l.setTint(item.tint));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(item.tint); });
+        this._cosmeticsEnabled = true;
+        localStorage.setItem(STORAGE_COSMETICS, '1');
+        this._updateCosmeticToggleUI();
+      });
+
+    const bgPanel     = this._buildCosmeticSubPanel(d, push, '🌊  BACKGROUNDS',
+      BG_IMAGES, STORAGE_OWNED_BG_IMAGES, STORAGE_ACTIVE_BG_IMAGE, s => s.tint,
+      item => {
+        this._activeBgImage = item.key;
+        // SPRITE SWAP POINT — swap background textures per biome when image sets are ready
+        // e.g.: this.bgLayers.forEach((l, i) => l.setTexture(item.key + '_biome' + i));
       });
 
     // ── NAV ───────────────────────────────────────────────────────────────────
-    const pageMap = { main: catObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, obj: objPanel.subObjs, bg: bgPanel.subObjs };
+    const pageMap = { main: catObjs, sprite: spritePanel.subObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, theme: themePanel.subObjs, bg: bgPanel.subObjs };
     this._pauseCustNav = page => {
       Object.values(pageMap).forEach(arr => arr.forEach(o => o.setVisible(false)));
       pageMap[page]?.forEach(o => o.setVisible(true));
     };
 
-    this._pauseSkinRefs  = skinPanel.refs;
-    this._pauseTrailRefs = trailPanel.refs;
-    this._pauseObjRefs   = objPanel.refs;
-    this._pauseBgRefs    = bgPanel.refs;
+    this._pauseSpriteRefs = spritePanel.refs;
+    this._pauseSkinRefs   = skinPanel.refs;
+    this._pauseTrailRefs  = trailPanel.refs;
+    this._pauseThemeRefs  = themePanel.refs;
+    this._pauseBgRefs     = bgPanel.refs;
 
     this.pauseCustomizeObjs = allObjs;
     allObjs.forEach(o => o.setVisible(false));
@@ -1707,17 +1840,21 @@ export default class Game extends Phaser.Scene {
     dataArr.forEach((item, i) => {
       const py  = H * 0.285 + i * 72;
       const col = getColor(item);
-      const isWhite = col === 0xffffff;
+      const rcCol = parseInt(item.rc.slice(1), 16);
+      const discCol = col === 0xffffff ? rcCol : col;
+      const isGrey = discCol === 0xaaaaaa;
 
       const card = mk(this.add.rectangle(cx, py, cardW, 60, 0x0a0018)
         .setStrokeStyle(1, 0x6611aa, 0.35).setDepth(d + 1).setInteractive({ useHandCursor: true }));
-      mk(this.add.circle(left + 34, py, 22, col, isWhite ? 0.45 : 0.8).setDepth(d + 2));
+      mk(this.add.circle(left + 34, py, 22, discCol, isGrey ? 0.45 : 0.8).setDepth(d + 2));
       mk(this.add.circle(left + 34, py, 22, 0, 0)
-        .setStrokeStyle(1.5, col, isWhite ? 0.35 : 0.65).setDepth(d + 3));
+        .setStrokeStyle(1.5, discCol, isGrey ? 0.35 : 0.65).setDepth(d + 3));
       mk(this.add.text(left + 68, py - 9, item.name, {
         fontSize: '14px', fontFamily: 'Arial Black', color: '#cccccc', stroke: '#000', strokeThickness: 2,
       }).setOrigin(0, 0.5).setDepth(d + 2));
-      mk(this.add.text(left + 68, py + 11, item.rarity.toUpperCase(), {
+      mk(this.add.rectangle(left + 62, py + 11, 7, 7, parseInt(item.rc.slice(1), 16))
+        .setAngle(45).setDepth(d + 3));
+      mk(this.add.text(left + 76, py + 11, item.rarity.toUpperCase(), {
         fontSize: '11px', fontFamily: 'Arial Black', color: item.rc,
       }).setOrigin(0, 0.5).setDepth(d + 2));
 
@@ -1733,6 +1870,7 @@ export default class Game extends Phaser.Scene {
       card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.35));
       actionBtn.on('pointerdown', () => {
         if (!this.gamePaused) return;
+        this._sfx.button?.stop(); this._sfx.button?.play();
         const owned = (localStorage.getItem(storageOwnedKey) || 'default').split(',');
         if (!owned.includes(item.key)) return;
         localStorage.setItem(storageActiveKey, item.key);
@@ -1746,14 +1884,18 @@ export default class Game extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true }));
     backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
     backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
-    backBtn.on('pointerdown', () => { if (this.gamePaused) this._pauseCustNav?.('main'); });
+    backBtn.on('pointerdown', () => { if (!this.gamePaused) return; this._sfx.button?.stop(); this._sfx.button?.play(); this._pauseCustNav?.('main'); });
 
     return { subObjs, refs };
   }
 
   _refreshPauseCustomize() {
-    [this._pauseSkinRefs, this._pauseTrailRefs, this._pauseObjRefs, this._pauseBgRefs]
+    [this._pauseSpriteRefs, this._pauseSkinRefs, this._pauseTrailRefs, this._pauseThemeRefs, this._pauseBgRefs]
       .forEach(refs => this._refreshCosmeticRefs(refs));
+    this._pauseCatNameTxts?.forEach(({ txt, cat }) => {
+      const activeKey = localStorage.getItem(cat.storageKey) || 'default';
+      txt.setText(cat.data.find(s => s.key === activeKey)?.name ?? 'DEFAULT');
+    });
   }
 
   _refreshCosmeticRefs(refs) {
@@ -1774,6 +1916,7 @@ export default class Game extends Phaser.Scene {
       }
     });
   }
+
 
 
   _buildPauseSlider(mk, cx, cy, d, label, volKey, mutKey, defaultVol, onChange) {

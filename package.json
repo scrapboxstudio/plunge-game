@@ -1,6 +1,6 @@
 {
   "name": "plunge",
-  "version": "2.2.0",
+  "version": "2.4.0",
   "description": "PLUNGE - Deep sea diving arcade game",
   "scripts": {
     "dev": "vite",

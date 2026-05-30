@@ -4,8 +4,10 @@ export default class Boot extends Phaser.Scene {
   constructor() { super('Boot'); }
 
   preload() {
-    this.load.image('diver',     'assets/fish.png');
-    this.load.image('diverDead', 'assets/dead.png');
+    ['fish', 'star', 'octo', 'shark', 'kraken'].forEach(k => {
+      this.load.image(k + 'Alive', `assets/${k}Alive.png`);
+      this.load.image(k + 'Dead',  `assets/${k}Dead.png`);
+    });
     this.load.audio('mainMenu',  'assets/mainMenu.mp3');
     this.load.audio('buttonSFX', 'assets/buttonSFX.mp3');
     this.load.audio('wooshSFX',  'assets/wooshSFX.wav');

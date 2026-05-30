@@ -26,8 +26,9 @@ export default class GameOver extends Phaser.Scene {
   constructor() { super('GameOver'); }
 
   init(data) {
-    this.finalDepth = data.depth || 0;
-    this.biomeName  = data.biome || 'Coral Reef';
+    this.finalDepth    = data.depth         || 0;
+    this.biomeName     = data.biome         || 'Coral Reef';
+    this.spriteAliveKey = data.spriteAliveKey || 'fishAlive';
   }
 
   create() {
@@ -69,7 +70,7 @@ export default class GameOver extends Phaser.Scene {
 
     // Ghost diver drifting upward
     const ghost = this.add.image(
-      Phaser.Math.Between(80, W - 80), H * 0.75, 'diver'
+      Phaser.Math.Between(80, W - 80), H * 0.75, this.spriteAliveKey
     ).setAlpha(0.06).setScale(1.1)
      .setBlendMode(Phaser.BlendModes.ADD)
      .setAngle(Phaser.Math.Between(-8, 8));
