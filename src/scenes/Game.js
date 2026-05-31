@@ -5,11 +5,11 @@ import {
 } from '../main.js';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
-  PLAYER_SPRITES, SKINS, TRAILS, THEMES, SKIN_TINTS,
-  STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
-  STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
-  STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
-  STORAGE_ACTIVE_THEME, STORAGE_OWNED_THEMES,
+  PLAYER_SPRITES, THEMES, SKIN_TINTS,
+  STORAGE_ACTIVE_SPRITE,
+  STORAGE_ACTIVE_SKIN,
+  STORAGE_ACTIVE_TRAIL,
+  STORAGE_ACTIVE_THEME,
 } from '../config/cosmetics.js';
 
 const STORAGE_COINS      = 'plunge_coins';
@@ -132,6 +132,7 @@ export default class Game extends Phaser.Scene {
       button: _snd('buttonSFX', 0.7),
       woosh:  _snd('wooshSFX',  1.0),
       hit:    _snd('hitSFX',    0.9),
+      coin:   _snd('coinSFX',   0.75),
     };
 
     // ── WORLD ────────────────────────────────────────────────────────────────
@@ -807,7 +808,7 @@ export default class Game extends Phaser.Scene {
     this.tweens.killTweensOf(coin);
     coin.destroy();
 
-    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.75 * sfxVol() });
+    this._sfx.coin?.stop(); this._sfx.coin?.play();
 
     this._coinsCollectedTotal++;
     this.coins++;
@@ -885,7 +886,7 @@ export default class Game extends Phaser.Scene {
     shell.destroy();
 
     // Pickup chime, then loop the invincibility track
-    if (this.cache.audio.has('coinSFX')) this.sound.play('coinSFX', { volume: 0.9 * sfxVol() });
+    this._sfx.coin?.stop(); this._sfx.coin?.play();
     if (this.cache.audio.has('invincibleSFX')) {
       this._invincibleSFX = this.sound.add('invincibleSFX', { volume: 0.8 * sfxVol(), loop: true });
       this._invincibleSFX.play();
@@ -1036,7 +1037,7 @@ export default class Game extends Phaser.Scene {
     if (this.invincible || this.dead) return;
     this.invincible = true;
     this.pressure = Math.min(this.pressure + PRESSURE_HIT * this._armorMult, 1.0);
-    if (this.cache.audio.has('hitSFX')) this.sound.play('hitSFX', { volume: 0.9 * sfxVol() });
+    this._sfx.hit?.stop(); this._sfx.hit?.play();
     navigator.vibrate?.(40);  // Android / web fallback
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
 
@@ -1137,6 +1138,8 @@ export default class Game extends Phaser.Scene {
   }
 
   _revive() {
+    if (this._reviving) return;
+    this._reviving = true;
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
 
@@ -1199,6 +1202,7 @@ export default class Game extends Phaser.Scene {
         blinkTween.stop();
         this.diver.alpha = 1;
         this.dead = false;  // unfreeze — obstacles scroll, physics resumes
+        this._reviving = false;
         this.tweens.add({
           targets: [countBg, readyTxt, countTxt], alpha: 0, duration: 500,
           onComplete: () => { countBg.destroy(); readyTxt.destroy(); countTxt.destroy(); },
@@ -1220,6 +1224,8 @@ export default class Game extends Phaser.Scene {
   }
 
   _watchAd() {
+    if (this._reviving) return;
+    this._reviving = true;
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
     const adTxt = this.add.text(W / 2, H / 2, 'LOADING AD...', {
@@ -1228,7 +1234,7 @@ export default class Game extends Phaser.Scene {
     // TODO (publishing): replace stub with AdMob.showRewardVideo({ adId: 'ca-app-pub-...' })
     //   On reward callback: adTxt.destroy(); this._revive();
     //   On dismiss/failure: adTxt.destroy(); show contObjs again
-    this.time.delayedCall(1500, () => { adTxt.destroy(); this._revive(); });
+    this.time.delayedCall(1500, () => { adTxt.destroy(); this._reviving = false; this._revive(); });
   }
 
   _updateLivesHUD() {
@@ -1289,7 +1295,6 @@ export default class Game extends Phaser.Scene {
     this._currentMusic?.resume();
     this.pauseObjs.forEach(o => o.setVisible(false));
     this.pauseSettingsObjs?.forEach(o => o.setVisible(false));
-    this.pauseCustomizeObjs?.forEach(o => o.setVisible(false));
   }
 
   // ── UPDATE ────────────────────────────────────────────────────────────────
@@ -1385,6 +1390,11 @@ export default class Game extends Phaser.Scene {
       const tx = this.diver.x + flipSign * 36 * Math.cos(angleRad);
       const ty = this.diver.y + flipSign * 36 * Math.sin(angleRad);
       this._spawnTrailParticles(tx, ty);
+    }
+    // Hard cap — cull oldest entries when the trail grows too large (blood effects can accumulate)
+    if (this.trail.length > 180) {
+      const excess = this.trail.splice(0, this.trail.length - 180);
+      excess.forEach(e => { if (e.img?.active) e.img.destroy(); });
     }
     this.trail = this.trail.filter(e => {
       e.life -= dt * e.decay;
@@ -2221,18 +2231,6 @@ export default class Game extends Phaser.Scene {
     });
 
 
-    // ── CUSTOMIZE ─────────────────────────────────────────────────
-    mk(this.add.rectangle(cx, H * 0.770, W * 0.80, 1, 0x445566, 0.18).setDepth(d).setVisible(false));
-
-    const [custBtn, custTxt] = this._makeBtn(cx, H * 0.830, '✦  CUSTOMIZE', 240, 48, 0x0a0018, 0x9944dd, 20, d + 1,
-      () => {
-        this._refreshPauseCustomize();
-        this.pauseCustomizeObjs?.forEach(o => o.setVisible(true));
-        this._pauseCustNav?.('main');
-      });
-    objs.push(custBtn, custTxt);
-    custBtn.setVisible(false); custTxt.setVisible(false);
-
     const backBtn = mk(this.add.text(cx, H * 0.912, '‹  BACK', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
@@ -2242,225 +2240,6 @@ export default class Game extends Phaser.Scene {
 
     this.pauseSettingsObjs = objs;
     this.pauseSettingsObjs.forEach(o => o.setVisible(false));
-
-    this._buildPauseCustomizePanel(d + 2);
-  }
-
-  _buildPauseCustomizePanel(d) {
-    const cx     = W / 2;
-    const cardW  = W - 48;
-    const allObjs = [];
-    const push = o => { allObjs.push(o); return o; };
-
-    // ── CATEGORY LIST (main view) ─────────────────────────────────────────────
-    const catObjs = [];
-    const mkC = o => { push(o); catObjs.push(o); return o; };
-
-    mkC(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.97).setDepth(d));
-    mkC(this.add.text(cx, H * 0.10, '✦  CUSTOMIZE', {
-      fontSize: '26px', fontFamily: 'Arial Black',
-      color: '#9944dd', stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(d + 1));
-    mkC(this.add.rectangle(cx, H * 0.158, W * 0.80, 1, 0x6611aa, 0.20).setDepth(d + 1));
-
-    const catDefs = [
-      { icon: '🐟', label: 'PLAYER SKINS', storageKey: STORAGE_ACTIVE_SPRITE,   data: PLAYER_SPRITES },
-      { icon: '🤿', label: 'AURA',          storageKey: STORAGE_ACTIVE_SKIN,     data: SKINS          },
-      { icon: '✨', label: 'PARTICLES',     storageKey: STORAGE_ACTIVE_TRAIL,    data: TRAILS         },
-      { icon: '🎨', label: 'THEMES',         storageKey: STORAGE_ACTIVE_THEME,    data: THEMES         },
-    ];
-    const pageKeys = ['sprite', 'skin', 'trail', 'theme'];
-
-    this._pauseCatNameTxts = [];
-    catDefs.forEach((cat, i) => {
-      const py = H * 0.255 + i * 98;
-      const card = mkC(this.add.rectangle(cx, py, cardW, 82, 0x0a0018)
-        .setStrokeStyle(1, 0x6611aa, 0.40).setDepth(d + 1).setInteractive({ useHandCursor: true }));
-      mkC(this.add.text(cx - cardW / 2 + 28, py, cat.icon, {
-        fontSize: '26px', fontFamily: 'Arial',
-      }).setOrigin(0.5).setDepth(d + 2));
-      mkC(this.add.text(cx - cardW / 2 + 62, py - 14, cat.label, {
-        fontSize: '16px', fontFamily: 'Arial Black', color: '#9944dd', stroke: '#000', strokeThickness: 2,
-      }).setOrigin(0, 0.5).setDepth(d + 2));
-      const activeKey = localStorage.getItem(cat.storageKey) || 'default';
-      const activeName = cat.data.find(s => s.key === activeKey)?.name ?? 'DEFAULT';
-      const activeNameTxt = mkC(this.add.text(cx - cardW / 2 + 62, py + 12, activeName, {
-        fontSize: '12px', fontFamily: 'Arial', color: '#445566',
-      }).setOrigin(0, 0.5).setDepth(d + 2));
-      this._pauseCatNameTxts.push({ txt: activeNameTxt, cat });
-      mkC(this.add.text(cx + cardW / 2 - 14, py, '›', {
-        fontSize: '28px', fontFamily: 'Arial Black', color: '#9944dd',
-      }).setOrigin(1, 0.5).setDepth(d + 2));
-      card.on('pointerover', () => card.setStrokeStyle(2, 0x9944dd, 0.8));
-      card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
-      card.on('pointerdown', () => { if (!this.gamePaused) return; this._sfx.button?.stop(); this._sfx.button?.play(); this._pauseCustNav?.(pageKeys[i]); });
-    });
-
-    const catBack = mkC(this.add.text(cx, H * 0.895, '‹  BACK', {
-      fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true }));
-    catBack.on('pointerover', () => catBack.setColor('#6688aa'));
-    catBack.on('pointerout',  () => catBack.setColor('#2a3a44'));
-    catBack.on('pointerdown', () => {
-      this._sfx.button?.stop(); this._sfx.button?.play();
-      catObjs.forEach(o => o.setVisible(false));
-      this.pauseSettingsObjs.forEach(o => o.setVisible(true));
-    });
-
-    // ── SUB-PANELS ────────────────────────────────────────────────────────────
-    const spritePanel = this._buildCosmeticSubPanel(d, push, '🐟  PLAYER SKINS',
-      PLAYER_SPRITES, STORAGE_OWNED_SPRITES, STORAGE_ACTIVE_SPRITE, s => s.tint,
-      item => {
-        this._activeSprite = item.key;
-        const { alive, dead } = this._spriteTexKeys();
-        this.diver.setTexture(alive);
-        this.diverDead.setTexture(dead);
-      });
-
-    const skinPanel  = this._buildCosmeticSubPanel(d, push, '🤿  AURA',
-      SKINS,     STORAGE_OWNED_SKINS,     STORAGE_ACTIVE_SKIN,     s => s.tint,
-      item => {
-        this._activeSkin = item.key;
-        const t = SKIN_TINTS[item.key] ?? 0xffffff;
-        this.diver.setTint(t); this.diverDead.setTint(t); this.diverGlow.setFillStyle(t, 0.22);
-        this._cosmeticsEnabled = true;
-        localStorage.setItem(STORAGE_COSMETICS, '1');
-        this._updateCosmeticToggleUI();
-      });
-
-    const trailPanel = this._buildCosmeticSubPanel(d, push, '✨  PARTICLES',
-      TRAILS,    STORAGE_OWNED_TRAILS,    STORAGE_ACTIVE_TRAIL,    s => s.tint,
-      item => {
-        this._activeTrail = item.key;
-        this._cosmeticsEnabled = true;
-        localStorage.setItem(STORAGE_COSMETICS, '1');
-        this._updateCosmeticToggleUI();
-      });
-
-    const themePanel  = this._buildCosmeticSubPanel(d, push, '🎨  THEMES',
-      THEMES,    STORAGE_OWNED_THEMES,    STORAGE_ACTIVE_THEME,    s => s.tint,
-      item => {
-        this._activeTheme = item.key;
-        this._syncTints();
-        this.bgLayers.forEach(l => l.setTint(this._bgSkinTint));
-        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(this._objSkinTint); });
-        this._cosmeticsEnabled = true;
-        localStorage.setItem(STORAGE_COSMETICS, '1');
-        this._updateCosmeticToggleUI();
-      });
-
-    // ── NAV ───────────────────────────────────────────────────────────────────
-    const pageMap = { main: catObjs, sprite: spritePanel.subObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, theme: themePanel.subObjs };
-    this._pauseCustNav = page => {
-      Object.values(pageMap).forEach(arr => arr.forEach(o => o.setVisible(false)));
-      pageMap[page]?.forEach(o => o.setVisible(true));
-    };
-
-    this._pauseSpriteRefs = spritePanel.refs;
-    this._pauseSkinRefs   = skinPanel.refs;
-    this._pauseTrailRefs  = trailPanel.refs;
-    this._pauseThemeRefs  = themePanel.refs;
-
-    this.pauseCustomizeObjs = allObjs;
-    allObjs.forEach(o => o.setVisible(false));
-  }
-
-  _buildCosmeticSubPanel(d, push, title, dataArr, storageOwnedKey, storageActiveKey, getColor, onEquip) {
-    const cx    = W / 2;
-    const cardW = W - 48;
-    const left  = cx - cardW / 2;
-    const subObjs = [];
-    const mk = o => { push(o); subObjs.push(o); return o; };
-    const refs = [];
-
-    mk(this.add.rectangle(cx, H / 2, W, H, 0x000000, 0.97).setDepth(d));
-    mk(this.add.text(cx, H * 0.10, title, {
-      fontSize: '22px', fontFamily: 'Arial Black',
-      color: '#9944dd', stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5).setDepth(d + 1));
-    mk(this.add.rectangle(cx, H * 0.158, W * 0.80, 1, 0x6611aa, 0.20).setDepth(d + 1));
-    mk(this.add.text(cx, H * 0.196, 'Unlock more in the Store', {
-      fontSize: '12px', fontFamily: 'Arial', color: '#334455',
-    }).setOrigin(0.5).setDepth(d + 1));
-
-    dataArr.forEach((item, i) => {
-      const py  = H * 0.285 + i * 72;
-      const col = getColor(item);
-      const rcCol = parseInt(item.rc.slice(1), 16);
-      const discCol = col === 0xffffff ? rcCol : col;
-      const isGrey = discCol === 0xaaaaaa;
-
-      const card = mk(this.add.rectangle(cx, py, cardW, 60, 0x0a0018)
-        .setStrokeStyle(1, 0x6611aa, 0.35).setDepth(d + 1).setInteractive({ useHandCursor: true }));
-      mk(this.add.circle(left + 34, py, 22, discCol, isGrey ? 0.45 : 0.8).setDepth(d + 2));
-      mk(this.add.circle(left + 34, py, 22, 0, 0)
-        .setStrokeStyle(1.5, discCol, isGrey ? 0.35 : 0.65).setDepth(d + 3));
-      mk(this.add.text(left + 68, py - 9, item.name, {
-        fontSize: '14px', fontFamily: 'Arial Black', color: '#cccccc', stroke: '#000', strokeThickness: 2,
-      }).setOrigin(0, 0.5).setDepth(d + 2));
-      mk(this.add.rectangle(left + 62, py + 11, 7, 7, parseInt(item.rc.slice(1), 16))
-        .setAngle(45).setDepth(d + 3));
-      mk(this.add.text(left + 76, py + 11, item.rarity.toUpperCase(), {
-        fontSize: '11px', fontFamily: 'Arial Black', color: item.rc,
-      }).setOrigin(0, 0.5).setDepth(d + 2));
-
-      const actionBtn = mk(this.add.rectangle(cx + cardW / 2 - 50, py, 84, 32, 0x1a0030)
-        .setStrokeStyle(1, 0x6611aa, 0.7).setDepth(d + 2).setInteractive({ useHandCursor: true }));
-      const actionTxt = mk(this.add.text(cx + cardW / 2 - 50, py, 'EQUIP', {
-        fontSize: '12px', fontFamily: 'Arial Black', color: '#9944dd',
-      }).setOrigin(0.5).setDepth(d + 3));
-
-      refs.push({ actionBtn, actionTxt, item, storageOwnedKey, storageActiveKey });
-
-      card.on('pointerover', () => card.setStrokeStyle(1.5, 0x9944dd, 0.7));
-      card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.35));
-      actionBtn.on('pointerdown', () => {
-        if (!this.gamePaused) return;
-        this._sfx.button?.stop(); this._sfx.button?.play();
-        const owned = (localStorage.getItem(storageOwnedKey) || 'default').split(',');
-        if (!owned.includes(item.key)) return;
-        localStorage.setItem(storageActiveKey, item.key);
-        onEquip(item);
-        this._refreshPauseCustomize();
-      });
-    });
-
-    const backBtn = mk(this.add.text(cx, H * 0.895, '‹  BACK', {
-      fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0.5).setDepth(d + 1).setInteractive({ useHandCursor: true }));
-    backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
-    backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
-    backBtn.on('pointerdown', () => { if (!this.gamePaused) return; this._sfx.button?.stop(); this._sfx.button?.play(); this._pauseCustNav?.('main'); });
-
-    return { subObjs, refs };
-  }
-
-  _refreshPauseCustomize() {
-    [this._pauseSpriteRefs, this._pauseSkinRefs, this._pauseTrailRefs, this._pauseThemeRefs]
-      .forEach(refs => this._refreshCosmeticRefs(refs));
-    this._pauseCatNameTxts?.forEach(({ txt, cat }) => {
-      const activeKey = localStorage.getItem(cat.storageKey) || 'default';
-      txt.setText(cat.data.find(s => s.key === activeKey)?.name ?? 'DEFAULT');
-    });
-  }
-
-  _refreshCosmeticRefs(refs) {
-    if (!refs) return;
-    refs.forEach(({ actionBtn, actionTxt, item, storageOwnedKey, storageActiveKey }) => {
-      const owned    = (localStorage.getItem(storageOwnedKey)  || 'default').split(',');
-      const isActive = (localStorage.getItem(storageActiveKey) || 'default') === item.key;
-      const isOwned  = owned.includes(item.key);
-      if (isActive) {
-        actionBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
-        actionTxt.setText('✓ ACTIVE').setColor('#00cc66').setFontSize('10px');
-      } else if (isOwned) {
-        actionBtn.setFillStyle(0x001100).setStrokeStyle(1, 0x00aa44, 0.7);
-        actionTxt.setText('EQUIP').setColor('#00aa44').setFontSize('12px');
-      } else {
-        actionBtn.setFillStyle(0x0f0f0f).setStrokeStyle(1, 0x222222, 0.4);
-        actionTxt.setText('LOCKED').setColor('#333333').setFontSize('11px');
-      }
-    });
   }
 
   _buildPauseSlider(mk, cx, cy, d, label, volKey, mutKey, defaultVol, onChange) {

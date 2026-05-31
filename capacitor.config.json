@@ -1,5 +1,5 @@
 {
-  "appId": "com.yourstudio.plunge",
+  "appId": "com.scrapboxstudio.plunge",
   "appName": "PLUNGE",
   "webDir": "dist",
   "bundledWebRuntime": false,
