@@ -20,7 +20,7 @@ export default class Boot extends Phaser.Scene {
     // automatically loads its background, skin sprites, and music tracks here.
     BIOMES.forEach(b => {
       this.load.image(b.bgKey, `assets/${b.bgKey.slice(3)}.png`);
-      [...b.bgSkins, ...b.fillSkins].forEach(s => this.load.image(s.key, `assets/${s.key}.png`));
+      [...b.bgSkins, ...b.fillSkins].forEach(s => this.load.image(s.key, s.path ?? `assets/${s.key}.png`));
       b.music.forEach(key => this.load.audio(key, `assets/${key}.mp3`));
     });
   }

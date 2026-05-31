@@ -1,11 +1,10 @@
-import { W, H, BIOMES } from '../main.js';
+import { W, H, SAFE_TOP, BIOMES } from '../main.js';
 import {
-  PLAYER_SPRITES, SKINS, TRAILS, THEMES, BG_IMAGES,
+  PLAYER_SPRITES, SKINS, TRAILS, THEMES,
   STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
   STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
   STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
   STORAGE_ACTIVE_THEME, STORAGE_OWNED_THEMES,
-  STORAGE_ACTIVE_BG_IMAGE, STORAGE_OWNED_BG_IMAGES,
 } from '../config/cosmetics.js';
 
 const STORAGE_BEST       = 'plunge_best';
@@ -236,8 +235,11 @@ export default class Menu extends Phaser.Scene {
 
   _buildStoreOverlay() {
     const d  = 10;
-    const oy = H * 0.07;
-    const oh = H * 0.84;
+    // Push overlay below the notch / Dynamic Island on iPhones.
+    // SAFE_TOP is at minimum 44px on phones (see main.js), so the panel always
+    // starts in the clear-screen area even if env(safe-area-inset-top) misbehaves.
+    const oy = H * 0.07 + SAFE_TOP;
+    const oh = Math.min(H * 0.84, H - oy - 20);  // shrink to keep a bottom margin
     const cw = W - 28;          // card/panel content width
     const cx = W / 2;
 
@@ -263,7 +265,6 @@ export default class Menu extends Phaser.Scene {
       { route: 'cosmetics_player', title: 'AURA',         data: SKINS,          ownedKey: STORAGE_OWNED_SKINS,     activeKey: STORAGE_ACTIVE_SKIN     },
       { route: 'cosmetics_particles', title: 'PARTICLES', data: TRAILS,         ownedKey: STORAGE_OWNED_TRAILS,    activeKey: STORAGE_ACTIVE_TRAIL    },
       { route: 'cosmetics_theme',  title: 'THEMES',       data: THEMES,         ownedKey: STORAGE_OWNED_THEMES,    activeKey: STORAGE_ACTIVE_THEME    },
-      { route: 'cosmetics_bg',     title: 'BACKGROUNDS',  data: BG_IMAGES,      ownedKey: STORAGE_OWNED_BG_IMAGES, activeKey: STORAGE_ACTIVE_BG_IMAGE },
     ];
     this._cosmeticPages.forEach(p => this._buildStoreCosmeticPage(d + 1, oy, oh, cw, cx, p));
   }
@@ -313,7 +314,7 @@ export default class Menu extends Phaser.Scene {
         fill:    0x0a0018,
         icon:    '✦',
         title:   'COSMETICS',
-        sub:     'Skins · Aura · Particles · Themes · Backgrounds',
+        sub:     'Skins · Aura · Particles · Themes',
         action:  () => this._navTo('cosmetics'),
       },
     ];
@@ -386,6 +387,8 @@ export default class Menu extends Phaser.Scene {
       { label: '$9.99',  coins: 1000 },
     ];
 
+    let _openConfirm;  // assigned after the confirmation overlay is built below
+
     pkgs.forEach((pkg, i) => {
       const py    = oy + 222 + i * 105;
       const cardW = cw - 32;
@@ -409,8 +412,67 @@ export default class Menu extends Phaser.Scene {
       card.on('pointerout',  () => card.setStrokeStyle(1, 0xddaa00, 0.35));
       buyBtn.on('pointerover', () => buyBtn.setFillStyle(0x442200));
       buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x221100));
-      buyBtn.on('pointerdown', () => {
+      buyBtn.on('pointerdown', () => { this._sfx(); _openConfirm?.(pkg); });
+    });
+
+    // ── PURCHASE CONFIRMATION OVERLAY ─────────────────────────────────────────
+    const cobjs = [];
+    const mkco  = o => { cobjs.push(o); return o; };
+    const ccY   = oy + oh * 0.46;
+    const ccW   = cw - 44;
+    const ccH   = 260;
+
+    mkco(this.add.rectangle(cx, oy + oh * 0.5, cw, oh, 0x000000, 0.92)
+      .setDepth(d + 10).setVisible(false).setInteractive());
+    mkco(this.add.rectangle(cx, ccY, ccW, ccH, 0x0d0800)
+      .setStrokeStyle(2, 0xddaa00, 0.7).setDepth(d + 11).setVisible(false));
+
+    mkco(this.add.text(cx, ccY - ccH / 2 + 30, 'CONFIRM PURCHASE', {
+      fontSize: '18px', fontFamily: 'Arial Black', color: '#ddaa00',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ccCoins = mkco(this.add.text(cx, ccY - ccH / 2 + 68, '', {
+      fontSize: '26px', fontFamily: 'Arial Black', color: '#ddaa00',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ccPrice = mkco(this.add.text(cx, ccY - ccH / 2 + 100, '', {
+      fontSize: '15px', fontFamily: 'Arial Black', color: '#998855',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    mkco(this.add.text(cx, ccY - ccH / 2 + 132, 'Are you sure you want to make this purchase?', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#778899',
+      wordWrap: { width: ccW - 40 }, align: 'center',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    mkco(this.add.text(cx, ccY - ccH / 2 + 158, 'This will charge your payment method.', {
+      fontSize: '11px', fontFamily: 'Arial', color: '#445566',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ccConfirmBtn = mkco(this.add.rectangle(cx - 52, ccY - ccH / 2 + 210, 86, 38, 0x002200)
+      .setStrokeStyle(1.5, 0x00cc66, 0.8).setDepth(d + 12).setVisible(false)
+      .setInteractive({ useHandCursor: true }));
+    mkco(this.add.text(cx - 52, ccY - ccH / 2 + 210, 'CONFIRM', {
+      fontSize: '13px', fontFamily: 'Arial Black', color: '#00cc66',
+    }).setOrigin(0.5).setDepth(d + 13).setVisible(false));
+
+    const ccCancelBtn = mkco(this.add.rectangle(cx + 52, ccY - ccH / 2 + 210, 86, 38, 0x111111)
+      .setStrokeStyle(1.5, 0x556677, 0.6).setDepth(d + 12).setVisible(false)
+      .setInteractive({ useHandCursor: true }));
+    mkco(this.add.text(cx + 52, ccY - ccH / 2 + 210, 'CANCEL', {
+      fontSize: '13px', fontFamily: 'Arial Black', color: '#556677',
+    }).setOrigin(0.5).setDepth(d + 13).setVisible(false));
+
+    const _closeConfirm = () => cobjs.forEach(o => o.setVisible(false));
+
+    _openConfirm = (pkg) => {
+      ccCoins.setText(`⬡ ${pkg.coins.toLocaleString()} coins`);
+      ccPrice.setText(pkg.label);
+
+      ccConfirmBtn.removeAllListeners('pointerdown');
+      ccConfirmBtn.on('pointerdown', () => {
         this._sfx();
+        _closeConfirm();
         const cur = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
         const updated = cur + pkg.coins;
         localStorage.setItem(STORAGE_COINS, updated);
@@ -418,7 +480,13 @@ export default class Menu extends Phaser.Scene {
         this._coinsPageFeedback.setText(`+${pkg.coins} coins added!`);
         this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
       });
-    });
+
+      cobjs.forEach(o => o.setVisible(true));
+    };
+
+    ccCancelBtn.on('pointerdown', () => { this._sfx(); _closeConfirm(); });
+
+    this._storeCoinsConfirmObjs = cobjs;
   }
 
   _buildStoreLivesPage(d, oy, oh, cw, cx) {
@@ -505,7 +573,6 @@ export default class Menu extends Phaser.Scene {
       { icon: '🤿', label: 'Aura',           sub: 'Change your diver colour', action: () => this._navTo('cosmetics_player')    },
       { icon: '✨', label: 'Particles',      sub: 'Buy trail effects',        action: () => this._navTo('cosmetics_particles') },
       { icon: '🎨', label: 'Themes',         sub: 'Change the whole game vibe', action: () => this._navTo('cosmetics_theme')    },
-      { icon: '🌊', label: 'Backgrounds',   sub: 'Swap biome backdrops',     action: () => this._navTo('cosmetics_bg')       },
       // TODO (post-launch): re-enable when implemented
       // { icon: '🎵', label: 'Music',         sub: 'Swap the soundtrack',      action: null },
       // { icon: '🎁', label: 'Mystery Box',   sub: 'Random rare items',        action: null },
@@ -569,14 +636,18 @@ export default class Menu extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'Arial Black', color: '#00cc77',
     }).setOrigin(0.5).setDepth(d).setVisible(false));
 
+    let _openInfoPanel;  // assigned after the info panel is built below
+
     page.data.forEach((item, i) => {
-      const py    = oy + 166 + i * 100;
+      const py    = oy + 166 + i * 108;
       const cardW = cw - 32;
+      // Available text width: between the icon on the left and the action button on the right
+      const descW = cardW - 180;
       const rcCol   = parseInt(item.rc.slice(1), 16);
       const discCol = item.tint === 0xffffff ? rcCol : item.tint;
       const isGrey  = discCol === 0xaaaaaa;
 
-      const card = mk(this.add.rectangle(cx, py, cardW, 85, 0x0a0018)
+      const card = mk(this.add.rectangle(cx, py, cardW, 96, 0x0a0018)
         .setStrokeStyle(1, 0x6611aa, 0.40).setDepth(d).setVisible(false)
         .setInteractive({ useHandCursor: true }));
 
@@ -591,37 +662,153 @@ export default class Menu extends Phaser.Scene {
           .setStrokeStyle(1.5, discCol, isGrey ? 0.35 : 0.7).setDepth(d + 2).setVisible(false));
       }
 
-      mk(this.add.text(cx - cardW / 2 + 74, py - 18, item.name, {
-        fontSize: '16px', fontFamily: 'Arial Black', color: '#cccccc',
+      mk(this.add.text(cx - cardW / 2 + 74, py - 26, item.name, {
+        fontSize: '15px', fontFamily: 'Arial Black', color: '#dddddd',
         stroke: '#000', strokeThickness: 2,
       }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
 
-      mk(this.add.text(cx - cardW / 2 + 74, py + 1, item.desc, {
-        fontSize: '11px', fontFamily: 'Arial', color: '#445566',
-      }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
+      // desc: word-wrapped, top-aligned — expands downward within the card without overflowing
+      mk(this.add.text(cx - cardW / 2 + 74, py - 10, item.desc, {
+        fontSize: '10px', fontFamily: 'Arial', color: '#8899aa',
+        wordWrap: { width: descW, useAdvancedWrap: false },
+        lineSpacing: 2,
+      }).setOrigin(0, 0).setDepth(d + 1).setVisible(false));
 
-      mk(this.add.rectangle(cx - cardW / 2 + 68, py + 19, 7, 7, parseInt(item.rc.slice(1), 16))
+      mk(this.add.rectangle(cx - cardW / 2 + 68, py + 30, 6, 6, parseInt(item.rc.slice(1), 16))
         .setAngle(45).setDepth(d + 2).setVisible(false));
-      mk(this.add.text(cx - cardW / 2 + 82, py + 19, item.rarity.toUpperCase(), {
-        fontSize: '11px', fontFamily: 'Arial Black', color: item.rc,
+      mk(this.add.text(cx - cardW / 2 + 80, py + 30, item.rarity.toUpperCase(), {
+        fontSize: '10px', fontFamily: 'Arial Black', color: item.rc,
       }).setOrigin(0, 0.5).setDepth(d + 1).setVisible(false));
 
-      const actionBtn = mk(this.add.rectangle(cx + cardW / 2 - 54, py, 90, 36, 0x1a0030)
+      const actionBtn = mk(this.add.rectangle(cx + cardW / 2 - 52, py, 86, 38, 0x1a0030)
         .setStrokeStyle(1, 0x6611aa, 0.7).setDepth(d + 1).setVisible(false)
         .setInteractive({ useHandCursor: true }));
 
-      const actionTxt = mk(this.add.text(cx + cardW / 2 - 54, py,
+      const actionTxt = mk(this.add.text(cx + cardW / 2 - 52, py,
         item.price === 0 ? 'EQUIP' : `${item.price.toLocaleString()} ⬡`, {
-          fontSize: '12px', fontFamily: 'Arial Black', color: '#9944dd',
+          fontSize: '12px', fontFamily: 'Arial Black', color: '#aa55ee',
+          stroke: '#000', strokeThickness: 1,
         }).setOrigin(0.5).setDepth(d + 2).setVisible(false));
 
       cardRefs.push({ card, actionBtn, actionTxt });
 
       card.on('pointerover', () => card.setStrokeStyle(2, 0x9944dd, 0.8));
       card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
-      actionBtn.on('pointerdown', () => { this._sfx(); this._handleCosmeticAction(item, page); });
+      actionBtn.on('pointerdown', () => {
+        this._sfx();
+        const _owned = (localStorage.getItem(page.ownedKey) || 'default').split(',');
+        if (_owned.includes(item.key)) this._handleCosmeticAction(item, page);
+        else _openInfoPanel?.(item);
+      });
     });
 
+    // ── INFO PANEL OVERLAY ─────────────────────────────────────────────────────
+    const iobjs = [];
+    const mki   = o => { iobjs.push(o); return o; };
+    const ipCY  = oy + oh * 0.50;
+    const ipW   = cw - 44;
+    const ipH   = 300;
+
+    mki(this.add.rectangle(cx, oy + oh * 0.5, cw, oh, 0x000000, 0.92)
+      .setDepth(d + 10).setVisible(false).setInteractive());
+    mki(this.add.rectangle(cx, ipCY, ipW, ipH, 0x0a0018)
+      .setStrokeStyle(2, 0x9944dd, 0.7).setDepth(d + 11).setVisible(false));
+
+    const ipClose = mki(this.add.text(cx + ipW / 2 - 18, ipCY - ipH / 2 + 22, '✕', {
+      fontSize: '16px', fontFamily: 'Arial Black', color: '#887799',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false).setInteractive({ useHandCursor: true }));
+
+    const ipName = mki(this.add.text(cx, ipCY - ipH / 2 + 46, '', {
+      fontSize: '22px', fontFamily: 'Arial Black', color: '#cccccc',
+      stroke: '#000', strokeThickness: 3,
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ipRarity = mki(this.add.text(cx, ipCY - ipH / 2 + 76, '', {
+      fontSize: '11px', fontFamily: 'Arial Black',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ipDesc = mki(this.add.text(cx, ipCY - ipH / 2 + 102, '', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#667788',
+      wordWrap: { width: ipW - 40 }, align: 'center',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    mki(this.add.text(cx, ipCY - ipH / 2 + 134, '— SPECIAL EFFECTS —', {
+      fontSize: '10px', fontFamily: 'Arial Black', color: '#553366',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ipEff1 = mki(this.add.text(cx, ipCY - ipH / 2 + 156, '', {
+      fontSize: '14px', fontFamily: 'Arial Black',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ipEff2 = mki(this.add.text(cx, ipCY - ipH / 2 + 179, '', {
+      fontSize: '14px', fontFamily: 'Arial Black', color: '#00ddbb',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    mki(this.add.rectangle(cx, ipCY - ipH / 2 + 204, ipW - 50, 1, 0x553366, 0.5)
+      .setDepth(d + 12).setVisible(false));
+
+    const ipPrice = mki(this.add.text(cx, ipCY - ipH / 2 + 224, '', {
+      fontSize: '20px', fontFamily: 'Arial Black', color: '#ddaa00',
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+
+    const ipActBtn = mki(this.add.rectangle(cx, ipCY - ipH / 2 + 267, 180, 40, 0x220044)
+      .setStrokeStyle(1.5, 0x9944dd, 0.9).setDepth(d + 12).setVisible(false)
+      .setInteractive({ useHandCursor: true }));
+
+    const ipActTxt = mki(this.add.text(cx, ipCY - ipH / 2 + 267, '', {
+      fontSize: '14px', fontFamily: 'Arial Black', color: '#bb66ee',
+    }).setOrigin(0.5).setDepth(d + 13).setVisible(false));
+
+    const _closeInfo = () => iobjs.forEach(o => o.setVisible(false));
+
+    _openInfoPanel = (item) => {
+      ipName.setText(item.name);
+      ipRarity.setText(`◆  ${item.rarity.toUpperCase()}  ◆`).setColor(item.rc);
+      ipDesc.setText(item.desc);
+
+      const effs = [];
+      if (item.speedBonus) effs.push(`⚡  +${item.speedBonus}%  Speed`);
+      if (item.armorBonus) effs.push(`🛡  +${item.armorBonus}%  Damage Resistance`);
+      ipEff1.setText(effs[0] ?? 'No special effects').setColor(effs.length ? '#00ddbb' : '#334455');
+
+      ipPrice.setText(item.price === 0 ? 'FREE' : `${item.price.toLocaleString()} ⬡`);
+
+      const _ownedNow  = (localStorage.getItem(page.ownedKey) || 'default').split(',');
+      const _activeNow = localStorage.getItem(page.activeKey) || 'default';
+      if (item.key === _activeNow) {
+        ipActTxt.setText('✓ EQUIPPED').setColor('#00cc66');
+        ipActBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
+      } else if (_ownedNow.includes(item.key)) {
+        ipActTxt.setText('EQUIP').setColor('#00aa44');
+        ipActBtn.setFillStyle(0x001100).setStrokeStyle(1.5, 0x00aa44, 0.9);
+      } else {
+        ipActTxt.setText('BUY NOW').setColor('#bb66ee');
+        ipActBtn.setFillStyle(0x220044).setStrokeStyle(1.5, 0x9944dd, 0.9);
+      }
+
+      ipActBtn.removeAllListeners('pointerdown');
+      ipActBtn.on('pointerdown', () => {
+        this._sfx();
+        this._handleCosmeticAction(item, page);
+        const o2 = (localStorage.getItem(page.ownedKey) || 'default').split(',');
+        const a2 = localStorage.getItem(page.activeKey) || 'default';
+        if (item.key === a2) {
+          ipActTxt.setText('✓ EQUIPPED').setColor('#00cc66');
+          ipActBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
+        } else if (o2.includes(item.key)) {
+          ipActTxt.setText('EQUIP').setColor('#00aa44');
+          ipActBtn.setFillStyle(0x001100).setStrokeStyle(1.5, 0x00aa44, 0.9);
+        }
+      });
+
+      iobjs.forEach(o => o.setVisible(true));
+      ipEff2.setText(effs[1] ?? '').setVisible(effs.length > 1);
+    };
+
+    ipClose.on('pointerdown', () => { this._sfx(); _closeInfo(); });
+
+    page.infoPanelObjs  = iobjs;
+    page.closeInfoPanel = _closeInfo;
     page.objs     = objs;
     page.cardRefs = cardRefs;
   }
@@ -667,11 +854,8 @@ export default class Menu extends Phaser.Scene {
         ref.actionBtn.setFillStyle(0x001100).setStrokeStyle(1, 0x00aa44, 0.7);
         ref.actionTxt.setText('EQUIP').setColor('#00aa44').setFontSize('13px');
       } else {
-        const canAfford = coins >= item.price;
-        ref.actionBtn.setFillStyle(canAfford ? 0x1a0030 : 0x0f0f0f)
-          .setStrokeStyle(1, canAfford ? 0x9944dd : 0x333333, canAfford ? 0.7 : 0.35);
-        ref.actionTxt.setText(`${item.price.toLocaleString()} ⬡`)
-          .setColor(canAfford ? '#9944dd' : '#333333').setFontSize('12px');
+        ref.actionBtn.setFillStyle(0x1a0030).setStrokeStyle(1, 0x9944dd, 0.7);
+        ref.actionTxt.setText('INFO').setColor('#9944dd').setFontSize('13px');
       }
     });
   }
@@ -691,9 +875,13 @@ export default class Menu extends Phaser.Scene {
   _navTo(page) {
     this._storeMainObjs.forEach(o => o.setVisible(false));
     this._storeCoinsObjs.forEach(o => o.setVisible(false));
+    this._storeCoinsConfirmObjs?.forEach(o => o.setVisible(false));
     this._storeLivesObjs.forEach(o => o.setVisible(false));
     this._storeCosmeticsObjs.forEach(o => o.setVisible(false));
-    this._cosmeticPages?.forEach(p => p.objs?.forEach(o => o.setVisible(false)));
+    this._cosmeticPages?.forEach(p => {
+      p.objs?.forEach(o => o.setVisible(false));
+      p.infoPanelObjs?.forEach(o => o.setVisible(false));
+    });
 
     const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
     this._storeCoinBadge?.setText(`⬡ ${coins.toLocaleString()}`);
@@ -767,9 +955,13 @@ export default class Menu extends Phaser.Scene {
     this._storeCoinBadge.setVisible(false);
     this._storeMainObjs.forEach(o => o.setVisible(false));
     this._storeCoinsObjs.forEach(o => o.setVisible(false));
+    this._storeCoinsConfirmObjs?.forEach(o => o.setVisible(false));
     this._storeLivesObjs.forEach(o => o.setVisible(false));
     this._storeCosmeticsObjs.forEach(o => o.setVisible(false));
-    this._cosmeticPages?.forEach(p => p.objs?.forEach(o => o.setVisible(false)));
+    this._cosmeticPages?.forEach(p => {
+      p.objs?.forEach(o => o.setVisible(false));
+      p.infoPanelObjs?.forEach(o => o.setVisible(false));
+    });
     this.time.delayedCall(50, () => { this.storeOpen = false; });
   }
 

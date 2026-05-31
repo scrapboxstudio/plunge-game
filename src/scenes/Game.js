@@ -5,12 +5,11 @@ import {
 } from '../main.js';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
-  PLAYER_SPRITES, SKINS, TRAILS, THEMES, BG_IMAGES, SKIN_TINTS,
+  PLAYER_SPRITES, SKINS, TRAILS, THEMES, SKIN_TINTS,
   STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
   STORAGE_ACTIVE_SKIN, STORAGE_OWNED_SKINS,
   STORAGE_ACTIVE_TRAIL, STORAGE_OWNED_TRAILS,
   STORAGE_ACTIVE_THEME, STORAGE_OWNED_THEMES,
-  STORAGE_ACTIVE_BG_IMAGE, STORAGE_OWNED_BG_IMAGES,
 } from '../config/cosmetics.js';
 
 const STORAGE_COINS      = 'plunge_coins';
@@ -51,6 +50,22 @@ function sfxVol() {
 const WALL_H    = 110;
 const FADE_MS   = 7000;  // biome crossfade — bg images, vignette, and music all use this
 
+// Converts a 0–1 hue to a packed RGB hex (S=1, L=0.60 — vibrant, not blinding).
+function _hueToHex(h) {
+  h = ((h % 1) + 1) % 1;  // wrap to [0,1)
+  const sector = h * 6;
+  const C = 0.80, m = 0.20;
+  const X = C * (1 - Math.abs(sector % 2 - 1));
+  let r, g, b;
+  if      (sector < 1) { r = C; g = X; b = 0; }
+  else if (sector < 2) { r = X; g = C; b = 0; }
+  else if (sector < 3) { r = 0; g = C; b = X; }
+  else if (sector < 4) { r = 0; g = X; b = C; }
+  else if (sector < 5) { r = X; g = 0; b = C; }
+  else                 { r = C; g = 0; b = X; }
+  return (Math.round((r + m) * 255) << 16) | (Math.round((g + m) * 255) << 8) | Math.round((b + m) * 255);
+}
+
 
 export default class Game extends Phaser.Scene {
   constructor() { super('Game'); }
@@ -74,12 +89,9 @@ export default class Game extends Phaser.Scene {
     this.coins        = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
     this.lives        = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
     this._cosmeticsEnabled = localStorage.getItem(STORAGE_COSMETICS) !== '0';
-    this._activeBgImage    = localStorage.getItem(STORAGE_ACTIVE_BG_IMAGE) || 'default';
-    const _themeTint  = this._cosmeticsEnabled
-      ? (THEMES.find(t => t.key === (localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default'))?.tint ?? 0xffffff)
-      : 0xffffff;
-    this._objSkinTint = _themeTint;
-    this._bgSkinTint  = _themeTint;
+    this._objSkinTint = 0xffffff;
+    this._bgSkinTint  = 0xffffff;
+    this._syncTints();
 
     // Input flags
     this.steerLeft  = false;
@@ -88,9 +100,9 @@ export default class Game extends Phaser.Scene {
     this.decorations = [];
 
     // Shell (invincibility) state
-    this._shellsThisBiome     = 0;   // shells spawned in current biome/batch (max 1)
-    this._nextShellIn         = this._shellSpawnDelay();
-    this._hadalShellBatchDepth = 0;
+    this._shellsThisBiome    = 0;   // shells spawned in current biome/batch (max 1)
+    this._nextShellIn        = this._shellSpawnDelay(false);
+    this._shellBatchDepth    = 0;   // depth at which the last shell batch began
     this._warpSpeedMult       = 1;   // speed multiplier applied to all obstacle scrolling (>1 during shell warp)
     this._warpTimeLeft        = 0;   // seconds of warp remaining
     this._shellInvincible     = false;
@@ -102,6 +114,14 @@ export default class Game extends Phaser.Scene {
     this._nextCoinDepth       = 100; // depth threshold before the next coin may spawn
     this._coinsCollectedTotal = 0;   // total collected this run
     this._lastGaps            = null;
+
+    // Shark charge — clean-distance meter that triggers an 8s bust ability
+    this._sharkChargeDist  = 0;
+    this._sharkBusting     = false;
+    this._sharkBustTimer   = 0;
+
+    // Neon theme electricity spark timer
+    this._neonSparkTimer   = 0;
 
     // Pre-create one reusable instance per SFX — safe: returns null if file wasn't loaded.
     // All play calls use optional chaining so a missing file never crashes the game.
@@ -173,6 +193,8 @@ export default class Game extends Phaser.Scene {
     this._activeSprite = localStorage.getItem(STORAGE_ACTIVE_SPRITE) || 'default';
     this._activeSkin   = localStorage.getItem(STORAGE_ACTIVE_SKIN)  || 'default';
     this._activeTrail  = localStorage.getItem(STORAGE_ACTIVE_TRAIL) || 'default';
+    this._activeTheme  = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
+    this._rainbowHue   = Math.random();  // random start so all legendary items don't sync on boot
     const { alive: _aliveKey, dead: _deadKey } = this._spriteTexKeys();
     this.diver.setTexture(_aliveKey);
     this.diverDead.setTexture(_deadKey);
@@ -180,9 +202,14 @@ export default class Game extends Phaser.Scene {
     this.diver.setTint(_skinTint);
     this.diverDead.setTint(_skinTint);
 
+    const _spriteEntry  = PLAYER_SPRITES.find(s => s.key === this._activeSprite) ?? PLAYER_SPRITES[0];
+    this._speedMult = 1 + (_spriteEntry.speedBonus ?? 0) / 100;
+    this._armorMult = 1 - (_spriteEntry.armorBonus ?? 0) / 100;
+    this.diver.setMaxVelocity(DIVER_MAX_VX * this._speedMult, 0);
+
     // ── WALLS ────────────────────────────────────────────────────────────────
     this.walls = this.physics.add.staticGroup();
-    this.physics.add.overlap(this.diver, this.walls, () => this.onHit(), null, this);
+    this.physics.add.overlap(this.diver, this.walls, (d, wall) => this._onWallOverlap(d, wall), null, this);
 
     // ── COINS ─────────────────────────────────────────────────────────────────
     this.coinPickups = this.physics.add.staticGroup();
@@ -191,6 +218,16 @@ export default class Game extends Phaser.Scene {
     // ── SHELLS ────────────────────────────────────────────────────────────────
     this.shellPickups = this.physics.add.staticGroup();
     this.physics.add.overlap(this.diver, this.shellPickups, (d, shell) => this._collectShell(shell), null, this);
+
+    // ── OCTO REACH HITBOX ─────────────────────────────────────────────────────
+    // Larger invisible zone that follows the diver; only active for Octo skin.
+    // Participates in coin/shell overlaps only — wall collision uses the normal diver body.
+    this.diverOctoReach = this.add.rectangle(W / 2, DIVER_Y, 140, 140).setVisible(false).setDepth(0);
+    this.physics.add.existing(this.diverOctoReach, false);
+    this.diverOctoReach.body.setAllowGravity(false);
+    this.diverOctoReach.body.enable = false;
+    this.physics.add.overlap(this.diverOctoReach, this.coinPickups,  (d, coin)  => this._collectCoin(coin),   null, this);
+    this.physics.add.overlap(this.diverOctoReach, this.shellPickups, (d, shell) => this._collectShell(shell), null, this);
 
     // Persistent aura rendered during invincibility — hidden until shell collected
     this.shellAura = this.add.circle(W / 2, DIVER_Y, 54, 0xbbddff, 0)
@@ -242,6 +279,7 @@ export default class Game extends Phaser.Scene {
       this._musicSounds.forEach(s => { try { s.stop(); s.destroy(); } catch (_) {} });
       this._musicSounds = [];
       try { this._invincibleSFX?.stop(); this._invincibleSFX?.destroy(); } catch (_) {}
+      try { this._sharkBustSFX?.stop(); this._sharkBustSFX?.destroy(); } catch (_) {}
     });
 
     this._initMusic();
@@ -264,7 +302,13 @@ export default class Game extends Phaser.Scene {
     if (this.dead || this.gamePaused) return;
     this.gameTime += 120;
     this._updateEffectiveDifficulty();
-    this.depth   += Math.round(this._eff.fallSpeed / 38 * this._warpSpeedMult);
+    const _depthGain = Math.round(this._eff.fallSpeed / 38 * this._warpSpeedMult);
+    this.depth += _depthGain;
+    // Shark charge — accumulate clean depth; hitting a wall resets this in _onWallOverlap
+    if (this._activeSprite === 'shark' && !this._sharkBusting) {
+      this._sharkChargeDist += _depthGain;
+      if (this._sharkChargeDist >= 5000) this._activateSharkBust();
+    }
     if (!this._newRecord && this._prevBest > 0 && this.depth > this._prevBest) {
       this._newRecord = true;
       this._onNewRecord();
@@ -279,11 +323,11 @@ export default class Game extends Phaser.Scene {
       this._coinBatchStartDepth = this.depth;
       this._nextCoinDepth       = this.depth + Phaser.Math.Between(50, 120);
     }
-    // Hadal: new shell every ~5000m (independent of coin batch)
-    if (this.biomeIdx === BIOMES.length - 1 && this.depth - this._hadalShellBatchDepth >= 5000) {
-      this._shellsThisBiome      = 0;
-      this._hadalShellBatchDepth = this.depth;
-      this._nextShellIn          = this._shellSpawnDelay();
+    // New shell every ~5000m — short countdown after batch reset so it actually fires
+    if (this.depth - this._shellBatchDepth >= 5000) {
+      this._shellsThisBiome = 0;
+      this._shellBatchDepth = this.depth;
+      this._nextShellIn     = this._shellSpawnDelay(true);
     }
   }
 
@@ -325,15 +369,14 @@ export default class Game extends Phaser.Scene {
     const newIdx = getBiomeIndexByTime(this.gameTime);
     if (newIdx !== this.biomeIdx) {
       this.biomeIdx = newIdx;
+      this._syncTints();
       this.spawnEvent.delay   = BIOMES[newIdx].spawnMs;
       this.spawnEvent.elapsed = 0;
 
       // Reset shell batch for the new biome; coin batches are depth-based and continue uninterrupted
       this._shellsThisBiome = 0;
-      this._nextShellIn     = this._shellSpawnDelay();
-      if (newIdx === BIOMES.length - 1) {
-        this._hadalShellBatchDepth = this.depth;
-      }
+      this._shellBatchDepth = this.depth;
+      this._nextShellIn     = this._shellSpawnDelay(false);
 
       const newVelY = -BIOMES[newIdx].fallSpeed;
       this.walls.getChildren().forEach(w => w.setData('velY', newVelY));
@@ -362,7 +405,51 @@ export default class Game extends Phaser.Scene {
       this.biomeTxt.setText(`▼  ${b.name.toUpperCase()}  ▼`);
       this.biomeTxt.setColor('#' + b.obsColor.toString(16).padStart(6, '0'));
       this.tweens.add({ targets: this.vigSprite, alpha: b.lightFade, duration: FADE_MS });
+
+      // The Void: start cycling backgrounds every 2 minutes
+      if (newIdx === BIOMES.length - 1 && b.bgCycles) {
+        this._voidBgIdx = 0;
+        if (this._voidBgTimer) this._voidBgTimer.remove();
+        this._voidBgTimer = this.time.addEvent({
+          delay: 120_000,
+          callback: this._voidBgTick,
+          callbackScope: this,
+          loop: true,
+        });
+      }
     }
+  }
+
+  _voidBgTick() {
+    const b = BIOMES[this.biomeIdx];
+    if (!b?.bgCycles) return;
+    this._voidBgIdx = ((this._voidBgIdx ?? 0) + 1) % b.bgCycles.length;
+    const cycle    = b.bgCycles[this._voidBgIdx];
+    const nextSlot = 1 - this.bgSlot;
+
+    if (this._bgFadeInTween)  this._bgFadeInTween.stop();
+    if (this._bgFadeOutTween) this._bgFadeOutTween.stop();
+    this.bgLayers[nextSlot].setTexture(cycle.key).setDisplaySize(W * 1.15, H * 1.15).setAlpha(0).setTint(this._bgSkinTint);
+    this._bgFadeInTween  = this.tweens.add({ targets: this.bgLayers[nextSlot],    alpha: 0.38, duration: FADE_MS });
+    this._bgFadeOutTween = this.tweens.add({ targets: this.bgLayers[this.bgSlot], alpha: 0,    duration: FADE_MS });
+    this.bgSlot = nextSlot;
+    this.time.delayedCall(FADE_MS / 2, () => { if (this.bg?.active) this.bg.setFillStyle(cycle.bg); });
+  }
+
+  // Compute the effective obj/bg tint for the current biome + active theme.
+  // Themes can define biomeTints: { biomeIdx: 0xRRGGBB } to override specific biomes.
+  _syncTints() {
+    if (!this._cosmeticsEnabled) {
+      this._objSkinTint = 0xffffff;
+      this._bgSkinTint  = 0xffffff;
+      return;
+    }
+    const themeKey = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
+    const theme    = THEMES.find(t => t.key === themeKey);
+    const override = theme?.biomeTints?.[this.biomeIdx];
+    const tint     = (override != null) ? override : (theme?.tint ?? 0xffffff);
+    this._objSkinTint = tint;
+    this._bgSkinTint  = tint;
   }
 
   // ── PROGRESSIVE DIFFICULTY ───────────────────────────────────────────────
@@ -474,49 +561,69 @@ export default class Game extends Phaser.Scene {
   // ── GAP-BASED WALL SPAWNING ───────────────────────────────────────────────
 
   _spawnWallRow(b, spawnY, speed) {
-    const numGaps = Phaser.Math.Between(b.minGaps, b.maxGaps);
-    const gaps    = this._generateGaps(numGaps, b.gapWidth, 0, W);
-    this._lastGaps = gaps;
-    const zones   = this._getObstacleZones(gaps, 0, W);
-    const skins   = BIOMES[this.biomeIdx].fillSkins;
-    const bgPool  = BIOMES[this.biomeIdx].bgSkins;
+    const numGaps      = Phaser.Math.Between(b.minGaps, b.maxGaps);
+    const gaps         = this._generateGaps(numGaps, b.gapWidth, 0, W);
+    this._lastGaps     = gaps;
+    const zones        = this._getObstacleZones(gaps, 0, W);
+    const skins        = BIOMES[this.biomeIdx].fillSkins;
+    const bgPool       = BIOMES[this.biomeIdx].bgSkins;
+    const isGhostTheme = this._cosmeticsEnabled && this._activeTheme === 'phantom';
 
     zones.forEach(zone => {
       const { x1, x2 } = zone;
       const zoneW = x2 - x1;
       if (zoneW <= 2) return;
 
-      // Outer zones (touching screen edges) get the landmark sprite.
-      // The landmark is anchored to its gap-facing edge and extends off-screen,
-      // so the canvas clips it and the gap area stays visually clear.
       const isLeft  = x1 <= 2;
       const isRight = x2 >= W - 2;
+      // ~12% of zones are phantom — no collision, flashing visual
+      const isGhost = isGhostTheme && Math.random() < 0.12;
 
       if ((isLeft || isRight) && bgPool && bgPool.length) {
-        // Physics rect — invisible, full zone
-        const rect = this.add.rectangle((x1 + x2) / 2, spawnY, zoneW, WALL_H, 0x000000, 0);
-        this.physics.add.existing(rect, true);
-        this.walls.add(rect);
-        rect.setData('velY', speed);
+        // Ghost zones skip the physics rect so the player passes straight through
+        if (!isGhost) {
+          const rect = this.add.rectangle((x1 + x2) / 2, spawnY, zoneW, WALL_H, 0x000000, 0);
+          this.physics.add.existing(rect, true);
+          this.walls.add(rect);
+          rect.setData('velY', speed);
+        }
 
-        // Landmark sprite at natural wallH height.
-        // Left zone: right edge of sprite = x2 (gap edge) → extends off screen left.
-        // Right zone: left edge of sprite = x1 (gap edge) → extends off screen right.
         const skin  = Phaser.Utils.Array.GetRandom(bgPool);
-        const dispW = skin.w;
-        const imgX  = isLeft ? x2 - dispW / 2 : x1 + dispW / 2;
-        const img   = this.add.image(imgX, spawnY, skin.key)
-          .setDisplaySize(dispW, WALL_H)
+        const img   = this.add.image(0, spawnY, skin.key)
           .setFlipX(Math.random() < 0.5)
           .setBlendMode(Phaser.BlendModes.ADD)
           .setDepth(6);
+        const dispW = img.width * (WALL_H / img.height);
+        img.setDisplaySize(dispW, WALL_H);
+        img.setX(isLeft ? x2 - dispW / 2 : x1 + dispW / 2);
         img.setData('velY', speed).setTint(this._objSkinTint);
         this.decorations.push({ obj: img, isDecor: true });
-        // Overlay fillSkins for variety — drawn in front of the landmark at depth 7
-        if (skins && skins.length) this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins, false);
+
+        if (isGhost) {
+          this.tweens.add({
+            targets: img, alpha: { from: 0.06, to: 0.52 },
+            yoyo: true, repeat: -1,
+            duration: Phaser.Math.Between(260, 500), ease: 'Sine.InOut',
+          });
+        }
       } else {
-        // Interior zone or biome with no BG pool: fill with tiled smaller sprites
-        this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins);
+        if (isGhost) {
+          // Interior ghost zone — track newly pushed decorations and flash them
+          const before = this.decorations.length;
+          this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins, false);
+          for (let i = before; i < this.decorations.length; i++) {
+            const e = this.decorations[i];
+            if (e.obj?.active) {
+              this.tweens.add({
+                targets: e.obj, alpha: { from: 0.06, to: 0.52 },
+                yoyo: true, repeat: -1,
+                duration: Phaser.Math.Between(260, 500), ease: 'Sine.InOut',
+              });
+            }
+          }
+        } else {
+          this._addSkinWallZone(x1, x2, spawnY, WALL_H, speed, skins);
+        }
       }
     });
   }
@@ -546,24 +653,30 @@ export default class Game extends Phaser.Scene {
       return [{ x1, x2: x1 + gapW }];
     }
 
-    // For 2 gaps: require at least 50 px of positional freedom so layouts don't become
-    // near-deterministic on typical phone widths. Fall back to 1 gap if too tight.
-    const lo1      = xMin + margin;
-    const hi1      = xMax - margin - 2 * gapW - minSeg;
-    const minTotal = 2 * margin + 2 * gapW + minSeg;
-    if ((xMax - xMin) < minTotal || (hi1 - lo1) < 50) {
+    // For 2 gaps: use a fixed-interior layout so fill sprites are never squished.
+    // Layout: [leftOuter] [gap1] [interiorSprite] [gap2] [rightOuter]
+    // The interior zone is exactly one XS (smallest tier) sprite wide — perfect fit, no scaling.
+    const biome     = BIOMES[this.biomeIdx];
+    const fillTiers = biome.fillSkins
+      ? [...new Set(biome.fillSkins.map(s => s.w))].sort((a, b) => a - b)
+      : [];
+    const interiorW = fillTiers.length > 0 ? fillTiers[0] : 70;
+    const remaining = (xMax - xMin) - 2 * gapW - interiorW;
+    const minOuter  = 12;
+
+    if (remaining < 2 * minOuter) {
       return this._generateGaps(1, gapW, xMin, xMax);
     }
 
-    const x1  = lo1 + Math.random() * (hi1 - lo1);
-    const lo2 = x1 + gapW + minSeg;
-    const hi2 = Math.max(lo2, xMax - margin - gapW);
-    const x2  = lo2 + Math.random() * (hi2 - lo2);
+    const leftW  = minOuter + Math.random() * (remaining - 2 * minOuter);
+    const gap1x1 = xMin + leftW;
+    const intX1  = gap1x1 + gapW;
+    const gap2x1 = intX1 + interiorW;
 
-    this._lastGapCenter = x1 + gapW / 2;
+    this._lastGapCenter = gap1x1 + gapW / 2;
     return [
-      { x1, x2: x1 + gapW },
-      { x1: x2, x2: x2 + gapW },
+      { x1: gap1x1, x2: gap1x1 + gapW },
+      { x1: gap2x1, x2: gap2x1 + gapW },
     ];
   }
 
@@ -592,44 +705,47 @@ export default class Game extends Phaser.Scene {
 
     const natW = sk => sk.w;
 
-    // Exclude skins whose natural width is more than 2× the zone — those would scale
-    // down below 50% height and look tiny. Fall back to full list if all are too wide.
-    const viable = skins.filter(sk => natW(sk) <= zoneW * 2.0);
-    const pool   = viable.length > 0 ? viable : skins;
+    // Derive the distinct size tiers from the skin list (e.g. [70,120,190,260,340] for coral).
+    // Each tier has exactly 2 variants (coralXS1/2, coralS1/2, etc.).
+    const tiers = [...new Set(skins.map(natW))].sort((a, b) => a - b);
 
-    const avgNatW = pool.reduce((s, sk) => s + natW(sk), 0) / pool.length;
-    let count     = Math.max(1, Math.round(zoneW / avgNatW));
-
-    // Ensure adj (uniform fill scale) stays ≤ 1.4 to avoid oversized sprites.
-    // If too few sprites, add more and re-sample.
-    let picked, natWs, adj;
-    for (let iter = 0; iter < 6; iter++) {
-      picked = Array.from({ length: count }, () => this._pickSkin(pool));
-      natWs  = picked.map(natW);
-      adj    = zoneW / natWs.reduce((a, b) => a + b, 0);
-      if (adj <= 1.4) break;
-      count++;
+    // Find (count, tier) where sprites are never stretched — only scaled down if needed.
+    // Rule: total natural width must be ≥ zoneW so adj = zoneW/total ≤ 1.0 always.
+    // Among valid combinations, pick the one with highest adj (minimum downscale).
+    // Small zones → XS tier; large zones → XL tier (naturally falls out of the scoring).
+    let bestCount = 1, bestTierW = tiers[0], bestAdj = 0;
+    for (let c = 1; c <= 12; c++) {
+      for (const tierW of tiers) {
+        const total = c * tierW;
+        if (total < zoneW) continue;         // would need adj > 1.0 (stretch) — skip
+        const adj = zoneW / total;           // always ≤ 1.0
+        if (adj > bestAdj) { bestCount = c; bestTierW = tierW; bestAdj = adj; }
+      }
     }
 
-    let cursor = x1;
-    picked.forEach((skin, i) => {
-      const dispW = natWs[i] * adj;
-      const sx    = cursor + dispW / 2;
+    // tierPool = the two sprites of the chosen size (e.g. coralXS1 + coralXS2).
+    // _pickSkin alternates between them to avoid consecutive repeats.
+    const tierPool = skins.filter(sk => natW(sk) === bestTierW);
+    const picked   = Array.from({ length: bestCount }, () => this._pickSkin(tierPool));
+    const adj      = zoneW / picked.reduce((s, sk) => s + natW(sk), 0); // ≤ 1.0
 
-      const img = this.add.image(sx, cy, skin.key)
+    let cursor = x1;
+    picked.forEach(skin => {
+      const dispW = natW(skin) * adj;
+      const sx    = cursor + dispW / 2;
+      const img   = this.add.image(sx, cy, skin.key)
         .setDisplaySize(dispW, wallH)
         .setFlipX(Math.random() < 0.5)
         .setBlendMode(Phaser.BlendModes.ADD)
-        .setDepth(addPhysics ? 6 : 7);
+        .setDepth(6);
       img.setData('velY', velY).setTint(this._objSkinTint);
       this.decorations.push({ obj: img, isDecor: true });
-
       cursor += dispW;
     });
   }
 
-  // Pick a skin from pool, avoiding recently used ones (window = half the pool size).
-  // Ensures all skins rotate through before repeating — critical for coral's 25 sprites.
+  // Pick a skin from pool, avoiding the most recently used entry (window = half pool size).
+  // For 2-sprite tier pools this alternates between the two variants.
   _pickSkin(pool) {
     const key    = this.biomeIdx;
     const recent = this._recentSkins[key] ?? (this._recentSkins[key] = []);
@@ -709,18 +825,13 @@ export default class Game extends Phaser.Scene {
 
   // ── SHELL (INVINCIBILITY) ─────────────────────────────────────────────────
 
-  _shellSpawnDelay() {
-    // Shell appears in the middle-to-late portion of each biome — rare and earned.
-    // Coral:    97 rows  → Between(60, 100)
-    // Kelp:    194 rows  → Between(110, 190)
-    // Midnight: 329 rows → Between(180, 280)
-    // Hadal:   batch     → Between(70, 130) rows after batch reset
-    switch (this.biomeIdx) {
-      case 0:  return Phaser.Math.Between(60,  100);
-      case 1:  return Phaser.Math.Between(110, 190);
-      case 2:  return Phaser.Math.Between(180, 280);
-      default: return Phaser.Math.Between(70,  130);
-    }
+  _shellSpawnDelay(forBatchReset = false) {
+    // Convert a target wait time to wall-row count so it works regardless of biome speed.
+    const spawnMs  = this._eff?.spawnMs ?? BIOMES[this.biomeIdx].spawnMs;
+    const targetMs = forBatchReset
+      ? Phaser.Math.Between(2000,  6000)  // 2–6 s after a batch reset
+      : Phaser.Math.Between(8000, 18000); // 8–18 s after biome entry
+    return Math.max(2, Math.round(targetMs / spawnMs));
   }
 
   _maybeSpawnShell(spawnY, speed) {
@@ -917,7 +1028,7 @@ export default class Game extends Phaser.Scene {
   onHit() {
     if (this.invincible || this.dead) return;
     this.invincible = true;
-    this.pressure = Math.min(this.pressure + PRESSURE_HIT, 1.0);
+    this.pressure = Math.min(this.pressure + PRESSURE_HIT * this._armorMult, 1.0);
     if (this.cache.audio.has('hitSFX')) this.sound.play('hitSFX', { volume: 0.9 * sfxVol() });
     navigator.vibrate?.(40);  // Android / web fallback
     Haptics.impact({ style: ImpactStyle.Medium }).catch(() => {});
@@ -1183,36 +1294,64 @@ export default class Game extends Phaser.Scene {
     // ── DIVER PHYSICS ─────────────────────────────────────────────
     let vx = this.diver.body.velocity.x;
 
-    if      (this.steerLeft)  vx -= DIVER_ACCEL * dt;
-    else if (this.steerRight) vx += DIVER_ACCEL * dt;
-    else                      vx *= DIVER_DRAG;
+    const _accel = DIVER_ACCEL * this._speedMult;
+    if (this.steerLeft) {
+      if (vx > 0) vx = 0;  // snap opposing momentum so direction change is instant
+      vx -= _accel * dt;
+    } else if (this.steerRight) {
+      if (vx < 0) vx = 0;
+      vx += _accel * dt;
+    } else {
+      vx *= DIVER_DRAG;
+    }
 
-    vx = Phaser.Math.Clamp(vx, -DIVER_MAX_VX, DIVER_MAX_VX);
+    vx = Phaser.Math.Clamp(vx, -DIVER_MAX_VX * this._speedMult, DIVER_MAX_VX * this._speedMult);
 
     this.diver.setVelocityX(vx);
     this.diver.setVelocityY(0);
-    this.diver.y = DIVER_Y;
 
-
+    // Octo bobs vertically; everything else is pinned to DIVER_Y
+    if (this._activeSprite === 'octo') {
+      this._octoBobTime = (this._octoBobTime ?? 0) + dt;
+      this.diver.y = DIVER_Y + Math.sin(this._octoBobTime * 2.6) * 7;
+    } else {
+      this.diver.y = DIVER_Y;
+    }
 
     this.diver.x = Phaser.Math.Clamp(this.diver.x, DIVER_MARGIN, W - DIVER_MARGIN);
     this.diverGlow.x = this.diver.x;
+    this.diverGlow.y = this.diver.y;
+
+    // Octo reach — wider pickup radius, disabled for all other skins
+    if (this._activeSprite === 'octo') {
+      this.diverOctoReach.body.enable = true;
+      this.diverOctoReach.body.reset(this.diver.x, this.diver.y);
+    } else {
+      this.diverOctoReach.body.enable = false;
+    }
 
     // Flip sprite to face whichever side the player is steering toward
     if      (vx >  10) this.diver.setFlipX(false);
     else if (vx < -10) this.diver.setFlipX(true);
-    // flipX mirrors the rotation direction in Phaser, so negate the angle when flipped.
-    // No flip:  90° → nose down,  45° → nose down-right
-    // FlipX: -90° → nose down, -45° → nose down-left  (same visual, mirrored)
-    const tilt = Phaser.Math.Clamp(Math.abs(vx) * DIVER_TILT, 0, DIVER_MAX_TILT);
-    // Tail waggle fades out as speed picks up — fish looks alive when coasting
-    const idleT  = 1 - Math.min(Math.abs(vx) / 65, 1);
-    const waggle = Math.sin(time * 0.005) * 4 * idleT;
-    this.diver.angle = (this.diver.flipX ? -(90 - tilt) : (90 - tilt)) + waggle;
+
+    if (this._activeSprite === 'star') {
+      // Spin continuously — CW when moving right, CCW when moving left, rate proportional to speed
+      this._starAngle = ((this._starAngle ?? 0) + vx * 4.0 * dt) % 360;
+      this.diver.angle = this._starAngle;
+    } else if (this._activeSprite === 'octo') {
+      this.diver.angle = 0;
+    } else {
+      // Default: nose-down tilt + idle tail waggle
+      const tilt   = Phaser.Math.Clamp(Math.abs(vx) * DIVER_TILT, 0, DIVER_MAX_TILT);
+      const idleT  = 1 - Math.min(Math.abs(vx) / 65, 1);
+      const waggle = Math.sin(time * 0.005) * 4 * idleT;
+      this.diver.angle = (this.diver.flipX ? -(90 - tilt) : (90 - tilt)) + waggle;
+    }
 
     // Keep dead sprite locked to diver during hit-flash (visible but world still running)
     if (this.diverDead.visible) {
       this.diverDead.x     = this.diver.x;
+      this.diverDead.y     = this.diver.y;
       this.diverDead.flipX = this.diver.flipX;
       this.diverDead.angle = this.diver.angle;
     }
@@ -1269,6 +1408,68 @@ export default class Game extends Phaser.Scene {
     }
     this.gridTile.tilePositionY -= this._eff.fallSpeed * dt * 0.22 * this._warpSpeedMult;
 
+    // ── BLOOD THEME PARTICLES ────────────────────────────────────
+    if (this._cosmeticsEnabled && this._activeTheme === 'crimson') {
+      this._bloodTimer = (this._bloodTimer ?? 0) + delta;
+      if (this._bloodTimer > 260) {
+        this._bloodTimer = 0;
+        const active = this.decorations.filter(e => e.obj?.active && !e.isGlowDot);
+        if (active.length > 0) {
+          this._spawnBloodEffect(
+            Phaser.Utils.Array.GetRandom(active).obj.x,
+            Phaser.Utils.Array.GetRandom(active).obj.y,
+          );
+        }
+      }
+    }
+
+    // ── NEON THEME ELECTRICITY ───────────────────────────────────
+    if (this._cosmeticsEnabled && this._activeTheme === 'neon') {
+      this._neonSparkTimer += delta;
+      if (this._neonSparkTimer > 180) {
+        this._neonSparkTimer = 0;
+        const active = this.decorations.filter(e => e.obj?.active && !e.isGlowDot);
+        if (active.length > 0) {
+          const wx = Phaser.Utils.Array.GetRandom(active).obj.x;
+          const wy = Phaser.Utils.Array.GetRandom(active).obj.y;
+          const baseVelY = -this._eff.fallSpeed;
+          for (let i = 0; i < Phaser.Math.Between(2, 4); i++) {
+            const obj = this.add.rectangle(
+              wx + Phaser.Math.Between(-30, 30),
+              wy + Phaser.Math.Between(-20, 20),
+              Phaser.Math.Between(8, 22), 1.5,
+              Math.random() < 0.35 ? 0xffffff : 0x00ffff
+            ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD)
+              .setAngle(Phaser.Math.Between(-70, 70));
+            this.trail.push({
+              img: obj, life: 1.0,
+              velX: Phaser.Math.FloatBetween(-50, 50),
+              velY: baseVelY + Phaser.Math.FloatBetween(-40, 40),
+              decay: 3.0, maxAlpha: 0.95,
+              rotSpeed: Phaser.Math.FloatBetween(-200, 200),
+            });
+          }
+        }
+      }
+    }
+
+    // ── RAINBOW (legendary cosmetics) ────────────────────────────
+    this._rainbowHue = (this._rainbowHue + dt * 0.04) % 1;  // full cycle ~25 s
+    if (this._cosmeticsEnabled) {
+      const rc = _hueToHex(this._rainbowHue);
+      if (this._activeSkin === 'legendary') {
+        this.diver.setTint(rc);
+        this.diverDead.setTint(rc);
+        this.diverGlow.setFillStyle(rc, 0.22);
+      }
+      if (this._activeTheme === 'legendary') {
+        this._objSkinTint = rc;
+        this._bgSkinTint  = rc;
+        this.bgLayers.forEach(l => l.setTint(rc));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(rc); });
+      }
+    }
+
     // ── DAMAGE BAR ───────────────────────────────────────────────
     const pct = Phaser.Math.Clamp(this.pressure, 0, 1);
     this.pBar.width = (W - 40) * pct;
@@ -1277,6 +1478,36 @@ export default class Game extends Phaser.Scene {
       pct < 0.78 ? 0xff9900 :
                    0xff2200
     );
+
+    // ── SHARK BUST TIMER ─────────────────────────────────────────
+    if (this._sharkBusting) {
+      this._sharkBustTimer -= dt;
+      if (this._sharkBustTimer <= 0) this._endSharkBust();
+    }
+
+    // ── SHARK CHARGE GAUGE ───────────────────────────────────────
+    this.sharkGaugeGfx.clear();
+    if (this._activeSprite === 'shark') {
+      // Placed between lives text (left) and biome label (center) — no overlap with pause button
+      const ST = SAFE_TOP, cx = 90, cy = 76 + ST, r = 8;
+      const pct = this._sharkBusting
+        ? Math.max(0, this._sharkBustTimer / 8.0)
+        : Math.min(this._sharkChargeDist / 5000, 1);
+      const col = this._sharkBusting ? 0xcc44ff : (pct >= 1 ? 0xffd700 : 0x8833cc);
+      this.sharkGaugeGfx.lineStyle(2.5, 0x110022, 0.9);
+      this.sharkGaugeGfx.strokeCircle(cx, cy, r);
+      if (pct > 0) {
+        this.sharkGaugeGfx.lineStyle(2.5, col, 1.0);
+        this.sharkGaugeGfx.beginPath();
+        this.sharkGaugeGfx.arc(cx, cy, r, Phaser.Math.DegToRad(-90), Phaser.Math.DegToRad(-90 + 360 * pct), false);
+        this.sharkGaugeGfx.strokePath();
+      }
+      if (pct >= 1 || this._sharkBusting) {
+        this.sharkGaugeGfx.lineStyle(0);
+        this.sharkGaugeGfx.fillStyle(col, 1.0);
+        this.sharkGaugeGfx.fillCircle(cx, cy, 3.5);
+      }
+    }
 
     // ── DEPTH DISPLAY ────────────────────────────────────────────
     this.depthTxt.setText(this.depth + 'm');
@@ -1428,17 +1659,18 @@ export default class Game extends Phaser.Scene {
     }
   }
 
-  // Legendary — spinning gold 5-point stars with stardust glow trail
+  // Legendary — spinning rainbow 5-point stars with chromatic stardust trail
   _trailLegendary(x, y) {
     const starCount = Math.random() < 0.5 ? 3 : 2;
     for (let i = 0; i < starCount; i++) {
       const inner = Phaser.Math.FloatBetween(3, 5);
       const outer = Phaser.Math.FloatBetween(7, 12);
-      const gold = Math.random() < 0.6 ? 0xffdd00 : 0xffaa00;
+      // Each star gets a hue slightly offset from the current rainbow position
+      const col = _hueToHex(this._rainbowHue + Phaser.Math.FloatBetween(-0.08, 0.08));
       const gs = this.add.star(
         x + Phaser.Math.Between(-14, 14),
         y + Phaser.Math.Between(0, 12),
-        5, inner, outer, gold
+        5, inner, outer, col
       ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD).setAlpha(0.9);
       this.trail.push({
         img: gs, life: 1.0,
@@ -1448,12 +1680,13 @@ export default class Game extends Phaser.Scene {
         rotSpeed: Phaser.Math.FloatBetween(120, 300) * (Math.random() < 0.5 ? 1 : -1),
       });
     }
-    // Stardust — tiny golden dots scatter wide
+    // Stardust — tiny dots spanning the spectrum around the current hue
     for (let i = 0; i < 3; i++) {
+      const dustCol = _hueToHex(this._rainbowHue + i * 0.12);
       const dust = this.add.circle(
         x + Phaser.Math.Between(-18, 18),
         y + Phaser.Math.Between(0, 8),
-        Phaser.Math.FloatBetween(1, 2.5), 0xffe066, 0.8
+        Phaser.Math.FloatBetween(1, 2.5), dustCol, 0.8
       ).setDepth(9).setBlendMode(Phaser.BlendModes.ADD);
       this.trail.push({
         img: dust, life: 1.0,
@@ -1461,6 +1694,141 @@ export default class Game extends Phaser.Scene {
         velY: Phaser.Math.FloatBetween(-70, -25),
         decay: 2.0, maxAlpha: 0.7,
       });
+    }
+  }
+
+  // ── SHARK BUST ────────────────────────────────────────────────────────────
+
+  _onWallOverlap(diver, wall) {
+    if (this._sharkBusting) {
+      this._bustWall(wall);
+      return;
+    }
+    // Any wall hit resets shark charge meter
+    if (this._activeSprite === 'shark') this._sharkChargeDist = 0;
+    this.onHit();
+  }
+
+  _bustWall(wall) {
+    if (!wall?.active || wall.getData('busted')) return;
+    const wallY = wall.y;
+
+    // Remove all physics rects in this wall row and fling them off-screen
+    const rowWalls = this.walls.getChildren().filter(w =>
+      w.active && !w.getData('busted') && Math.abs(w.y - wallY) < 80
+    );
+    rowWalls.forEach(w => {
+      w.setData('busted', true);
+      this.walls.remove(w, false, false);
+      if (w.body) w.body.enable = false;
+      const dir = w.x < W / 2 ? -1 : 1;
+      this.tweens.add({
+        targets: w,
+        x: w.x + dir * (W + 250),
+        y: w.y + Phaser.Math.Between(40, 130),
+        rotation: Phaser.Math.FloatBetween(-Math.PI, Math.PI),
+        alpha: 0,
+        duration: Phaser.Math.Between(350, 580),
+        ease: 'Cubic.Out',
+        onComplete: () => { if (w?.active) w.destroy(); },
+      });
+    });
+
+    // Also fling the visual decoration sprites in the same row
+    this.decorations.forEach(entry => {
+      const obj = entry.obj;
+      if (!obj?.active || obj.getData('busted')) return;
+      if (Math.abs(obj.y - wallY) > 80) return;
+      obj.setData('busted', true);
+      const dir = obj.x < W / 2 ? -1 : 1;
+      this.tweens.add({
+        targets: obj,
+        x: obj.x + dir * (W + 250),
+        y: obj.y + Phaser.Math.Between(40, 130),
+        rotation: Phaser.Math.FloatBetween(-Math.PI, Math.PI),
+        alpha: 0,
+        duration: Phaser.Math.Between(350, 580),
+        ease: 'Cubic.Out',
+        onComplete: () => { if (obj?.active) obj.destroy(); },
+      });
+    });
+  }
+
+  _activateSharkBust() {
+    this._sharkBusting    = true;
+    this._sharkBustTimer  = 8.0;
+    this._sharkChargeDist = 0;
+    this.cameras.main.flash(350, 130, 0, 255, true);
+    // Brief purple burst flash on the diver
+    this.diver.setTint(0xcc44ff);
+    this.diverDead.setTint(0xcc44ff);
+    this.time.delayedCall(400, () => {
+      if (!this.dead) this._syncTints();
+    });
+
+    // Slow purple overlay pulse for the duration of the bust
+    if (this._sharkBustFlashTween) this._sharkBustFlashTween.stop();
+    this.sharkBustFlash.setAlpha(0);
+    this._sharkBustFlashTween = this.tweens.add({
+      targets: this.sharkBustFlash,
+      alpha: { from: 0.05, to: 0.22 },
+      yoyo: true, repeat: -1,
+      duration: 800, ease: 'Sine.InOut',
+    });
+
+    // Same invincible loop SFX as the platinum shell
+    this._sharkBustSFX?.stop();
+    this._sharkBustSFX?.destroy();
+    if (this.cache.audio.has('invincibleSFX')) {
+      this._sharkBustSFX = this.sound.add('invincibleSFX', { volume: 0.8 * sfxVol(), loop: true });
+      this._sharkBustSFX.play();
+    }
+  }
+
+  _endSharkBust() {
+    this._sharkBusting    = false;
+    this._sharkBustTimer  = 0;
+    this._sharkChargeDist = 0;
+    this._sharkBustFlashTween?.stop();
+    this._sharkBustFlashTween = null;
+    this.tweens.add({ targets: this.sharkBustFlash, alpha: 0, duration: 500 });
+    this._sharkBustSFX?.stop();
+    this._sharkBustSFX?.destroy();
+    this._sharkBustSFX = null;
+  }
+
+  _spawnBloodEffect(x, y) {
+    const velY  = -this._eff.fallSpeed;  // match wall scroll so particles appear to rise from sprite
+    const count = Phaser.Math.Between(1, 3);
+    for (let i = 0; i < count; i++) {
+      if (Math.random() < 0.45) {
+        // Ember — spinning 4-point star
+        const sz  = Phaser.Math.FloatBetween(2, 4.5);
+        const obj = this.add.star(
+          x + Phaser.Math.FloatBetween(-22, 22), y,
+          4, sz * 0.45, sz, Math.random() < 0.5 ? 0xff2200 : 0xff6600
+        ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
+        this.trail.push({
+          img: obj, life: 1.0,
+          velX: Phaser.Math.FloatBetween(-35, 35),
+          velY: velY + Phaser.Math.FloatBetween(-100, 10),
+          decay: 0.65, maxAlpha: 0.80,
+          rotSpeed: Phaser.Math.FloatBetween(80, 220) * (Math.random() < 0.5 ? 1 : -1),
+        });
+      } else {
+        // Blood bubble — soft circle
+        const r   = Phaser.Math.FloatBetween(2, 5.5);
+        const obj = this.add.circle(
+          x + Phaser.Math.FloatBetween(-24, 24), y,
+          r, Math.random() < 0.6 ? 0xcc0011 : 0xff1133, 0.9
+        ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
+        this.trail.push({
+          img: obj, life: 1.0,
+          velX: Phaser.Math.FloatBetween(-18, 18),
+          velY: velY + Phaser.Math.FloatBetween(-110, -25),
+          decay: 0.50, maxAlpha: 0.82,
+        });
+      }
     }
   }
 
@@ -1553,8 +1921,14 @@ export default class Game extends Phaser.Scene {
     pauseHit.on('pointerout',   () => pauseBg.setStrokeStyle(1.2, 0x00ccff, 0.6));
     pauseHit.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._pause(); });
 
+    // Shark charge gauge — circle arc in biome-label row (left of center), clear of pause button
+    this.sharkGaugeGfx = this.add.graphics().setDepth(30);
+
     // Hit flash
     this.hitFlash = this.add.rectangle(W / 2, H / 2, W, H, 0xff0000, 0).setDepth(50);
+
+    // Shark bust purple overlay — slow pulse while bust is active
+    this.sharkBustFlash = this.add.rectangle(W / 2, H / 2, W, H, 0x8800ff, 0).setDepth(49);
   }
 
   _buildPauseOverlay() {
@@ -1646,12 +2020,9 @@ export default class Game extends Phaser.Scene {
         this.diver.setTint(skinT);
         this.diverDead.setTint(skinT);
         this.diverGlow.setFillStyle(skinT, 0.22);
-        const themeKey = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
-        const themeT = THEMES.find(t => t.key === themeKey)?.tint ?? 0xffffff;
-        this._objSkinTint = themeT;
-        this._bgSkinTint  = themeT;
-        this.bgLayers.forEach(l => l.setTint(themeT));
-        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(themeT); });
+        this._syncTints();
+        this.bgLayers.forEach(l => l.setTint(this._bgSkinTint));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(this._objSkinTint); });
       } else {
         // Revert all cosmetics to default (sprite and bg image unchanged)
         this.diver.setTint(0xffffff);
@@ -1712,9 +2083,8 @@ export default class Game extends Phaser.Scene {
       { icon: '🤿', label: 'AURA',          storageKey: STORAGE_ACTIVE_SKIN,     data: SKINS          },
       { icon: '✨', label: 'PARTICLES',     storageKey: STORAGE_ACTIVE_TRAIL,    data: TRAILS         },
       { icon: '🎨', label: 'THEMES',         storageKey: STORAGE_ACTIVE_THEME,    data: THEMES         },
-      { icon: '🌊', label: 'BACKGROUNDS',   storageKey: STORAGE_ACTIVE_BG_IMAGE, data: BG_IMAGES      },
     ];
-    const pageKeys = ['sprite', 'skin', 'trail', 'theme', 'bg'];
+    const pageKeys = ['sprite', 'skin', 'trail', 'theme'];
 
     this._pauseCatNameTxts = [];
     catDefs.forEach((cat, i) => {
@@ -1785,25 +2155,17 @@ export default class Game extends Phaser.Scene {
     const themePanel  = this._buildCosmeticSubPanel(d, push, '🎨  THEMES',
       THEMES,    STORAGE_OWNED_THEMES,    STORAGE_ACTIVE_THEME,    s => s.tint,
       item => {
-        this._objSkinTint = item.tint;
-        this._bgSkinTint  = item.tint;
-        this.bgLayers.forEach(l => l.setTint(item.tint));
-        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(item.tint); });
+        this._activeTheme = item.key;
+        this._syncTints();
+        this.bgLayers.forEach(l => l.setTint(this._bgSkinTint));
+        this.decorations.forEach(e => { if (e.obj?.active) e.obj.setTint(this._objSkinTint); });
         this._cosmeticsEnabled = true;
         localStorage.setItem(STORAGE_COSMETICS, '1');
         this._updateCosmeticToggleUI();
       });
 
-    const bgPanel     = this._buildCosmeticSubPanel(d, push, '🌊  BACKGROUNDS',
-      BG_IMAGES, STORAGE_OWNED_BG_IMAGES, STORAGE_ACTIVE_BG_IMAGE, s => s.tint,
-      item => {
-        this._activeBgImage = item.key;
-        // SPRITE SWAP POINT — swap background textures per biome when image sets are ready
-        // e.g.: this.bgLayers.forEach((l, i) => l.setTexture(item.key + '_biome' + i));
-      });
-
     // ── NAV ───────────────────────────────────────────────────────────────────
-    const pageMap = { main: catObjs, sprite: spritePanel.subObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, theme: themePanel.subObjs, bg: bgPanel.subObjs };
+    const pageMap = { main: catObjs, sprite: spritePanel.subObjs, skin: skinPanel.subObjs, trail: trailPanel.subObjs, theme: themePanel.subObjs };
     this._pauseCustNav = page => {
       Object.values(pageMap).forEach(arr => arr.forEach(o => o.setVisible(false)));
       pageMap[page]?.forEach(o => o.setVisible(true));
@@ -1813,7 +2175,6 @@ export default class Game extends Phaser.Scene {
     this._pauseSkinRefs   = skinPanel.refs;
     this._pauseTrailRefs  = trailPanel.refs;
     this._pauseThemeRefs  = themePanel.refs;
-    this._pauseBgRefs     = bgPanel.refs;
 
     this.pauseCustomizeObjs = allObjs;
     allObjs.forEach(o => o.setVisible(false));
@@ -1890,7 +2251,7 @@ export default class Game extends Phaser.Scene {
   }
 
   _refreshPauseCustomize() {
-    [this._pauseSpriteRefs, this._pauseSkinRefs, this._pauseTrailRefs, this._pauseThemeRefs, this._pauseBgRefs]
+    [this._pauseSpriteRefs, this._pauseSkinRefs, this._pauseTrailRefs, this._pauseThemeRefs]
       .forEach(refs => this._refreshCosmeticRefs(refs));
     this._pauseCatNameTxts?.forEach(({ txt, cat }) => {
       const activeKey = localStorage.getItem(cat.storageKey) || 'default';
