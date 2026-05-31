@@ -34,7 +34,7 @@ export const PLAYER_SPRITES = [
   { key: 'star',    spriteKey: 'star',   name: 'STAR',   price: 400,  tint: 0xffffff, rarity: 'Common',    rc: '#00ccaa', desc: 'Spins 360° as you move — speed & armor boost',           speedBonus: 5,  armorBonus: 5  },
   { key: 'octo',    spriteKey: 'octo',   name: 'OCTO',   price: 1000, tint: 0xffffff, rarity: 'Rare',      rc: '#4488ff', desc: 'Wider reach auto-collects nearby coins and shells',        speedBonus: 10, armorBonus: 10 },
   { key: 'shark',   spriteKey: 'shark',  name: 'SHARK',  price: 2500, tint: 0xffffff, rarity: 'Epic',      rc: '#aa44ff', desc: '5,000m collision-free charges an 8-second bust mode',      speedBonus: 15, armorBonus: 15 },
-  { key: 'kraken',  spriteKey: 'kraken', name: 'KRAKEN', price: 6000, tint: 0xffffff, rarity: 'Legendary', rc: '#b0ccff', desc: 'Max speed & armor — the ultimate deep-sea predator',       speedBonus: 20, armorBonus: 20 },
+  { key: 'kraken',  spriteKey: 'kraken', name: 'KRAKEN', price: 6000, tint: 0xffffff, rarity: 'Legendary', rc: '#b0ccff', desc: 'All abilities: wide reach, 5,000m bust charge & spiral aura', speedBonus: 20, armorBonus: 20 },
 ];
 
 export const SKINS = [

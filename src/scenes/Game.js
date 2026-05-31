@@ -1,5 +1,5 @@
 import {
-  W, H, SAFE_TOP, BIOMES, getBiomeIndexByTime, BIOME_DURATION_SCALE,
+  W, H, SAFE_TOP, BIOMES, getBiomeIndexByTime,
   DIVER_Y, DIVER_ACCEL, DIVER_DRAG, DIVER_MAX_VX, DIVER_TILT, DIVER_MAX_TILT, DIVER_MARGIN,
   PRESSURE_DECAY, PRESSURE_HIT,
 } from '../main.js';
@@ -244,6 +244,7 @@ export default class Game extends Phaser.Scene {
     this._buildUI();
     this._buildPauseOverlay();
     this._buildContinueOverlay();
+    this._buildTapTutorial();
 
     // ── INPUT ────────────────────────────────────────────────────────────────
     this.input.on('pointerdown', p => {
@@ -305,7 +306,7 @@ export default class Game extends Phaser.Scene {
     const _depthGain = Math.round(this._eff.fallSpeed / 38 * this._warpSpeedMult);
     this.depth += _depthGain;
     // Shark charge — accumulate clean depth; hitting a wall resets this in _onWallOverlap
-    if (this._activeSprite === 'shark' && !this._sharkBusting) {
+    if ((this._activeSprite === 'shark' || this._activeSprite === 'kraken') && !this._sharkBusting) {
       this._sharkChargeDist += _depthGain;
       if (this._sharkChargeDist >= 5000) this._activateSharkBust();
     }
@@ -466,9 +467,9 @@ export default class Game extends Phaser.Scene {
 
     // How far through this biome we are (0 = just entered, 1 = at the next boundary).
     let biomeStartMs = 0;
-    for (let i = 0; i < bi; i++) biomeStartMs += BIOMES[i].duration * 1000 * BIOME_DURATION_SCALE;
+    for (let i = 0; i < bi; i++) biomeStartMs += BIOMES[i].duration * 1000;
     const t = Math.min(1, Math.max(0,
-      (this.gameTime - biomeStartMs) / (b.duration * 1000 * BIOME_DURATION_SCALE)
+      (this.gameTime - biomeStartMs) / (b.duration * 1000)
     ));
     const tgt = BIOMES[bi + 1];
     this._eff = {
@@ -598,6 +599,9 @@ export default class Game extends Phaser.Scene {
         img.setX(isLeft ? x2 - dispW / 2 : x1 + dispW / 2);
         img.setData('velY', speed).setTint(this._objSkinTint);
         this.decorations.push({ obj: img, isDecor: true });
+        if (isGhostTheme) {
+          this._addPhantomGlow(img.x, spawnY, img.displayWidth, WALL_H, speed);
+        }
 
         if (isGhost) {
           this.tweens.add({
@@ -740,6 +744,9 @@ export default class Game extends Phaser.Scene {
         .setDepth(6);
       img.setData('velY', velY).setTint(this._objSkinTint);
       this.decorations.push({ obj: img, isDecor: true });
+      if (this._cosmeticsEnabled && this._activeTheme === 'phantom') {
+        this._addPhantomGlow(sx, cy, dispW, wallH, velY);
+      }
       cursor += dispW;
     });
   }
@@ -1310,8 +1317,8 @@ export default class Game extends Phaser.Scene {
     this.diver.setVelocityX(vx);
     this.diver.setVelocityY(0);
 
-    // Octo bobs vertically; everything else is pinned to DIVER_Y
-    if (this._activeSprite === 'octo') {
+    // Octo bobs vertically; kraken inherits this; everything else is pinned to DIVER_Y
+    if (this._activeSprite === 'octo' || this._activeSprite === 'kraken') {
       this._octoBobTime = (this._octoBobTime ?? 0) + dt;
       this.diver.y = DIVER_Y + Math.sin(this._octoBobTime * 2.6) * 7;
     } else {
@@ -1322,8 +1329,8 @@ export default class Game extends Phaser.Scene {
     this.diverGlow.x = this.diver.x;
     this.diverGlow.y = this.diver.y;
 
-    // Octo reach — wider pickup radius, disabled for all other skins
-    if (this._activeSprite === 'octo') {
+    // Octo/kraken reach — wider pickup radius for coins and shells
+    if (this._activeSprite === 'octo' || this._activeSprite === 'kraken') {
       this.diverOctoReach.body.enable = true;
       this.diverOctoReach.body.reset(this.diver.x, this.diver.y);
     } else {
@@ -1370,7 +1377,7 @@ export default class Game extends Phaser.Scene {
 
     // ── PARTICLE TRAIL ────────────────────────────────────────────
     this.trailTimer += delta;
-    if (this._cosmeticsEnabled && this.trailTimer > 80) {
+    if (this._cosmeticsEnabled && this.trailTimer > 80 && this._activeSprite !== 'kraken') {
       this.trailTimer = 0;
       // Tail position: offset from diver center toward the back end of the fish
       const angleRad = Phaser.Math.DegToRad(this.diver.angle);
@@ -1388,6 +1395,18 @@ export default class Game extends Phaser.Scene {
       if (e.life <= 0) { e.img.destroy(); return false; }
       return true;
     });
+
+    // ── KRAKEN SPIRAL AURA ───────────────────────────────────────
+    if (this._cosmeticsEnabled && this._activeSprite === 'kraken') {
+      this._krakenPulseT   = ((this._krakenPulseT ?? 0) + dt * 1.8) % (Math.PI * 2);
+      const rotSpeed       = 210 + Math.sin(this._krakenPulseT) * 140;
+      this._krakenArmAngle = ((this._krakenArmAngle ?? 0) + rotSpeed * dt) % 360;
+      this._krakenSpiralTimer = (this._krakenSpiralTimer ?? 0) + delta;
+      if (this._krakenSpiralTimer > 80) {
+        this._krakenSpiralTimer = 0;
+        this._emitKrakenSpiral(this.diver.x, this.diver.y);
+      }
+    }
 
     // ── AMBIENT BUBBLES ───────────────────────────────────────────
     this.ambients.forEach(a => {
@@ -1411,10 +1430,15 @@ export default class Game extends Phaser.Scene {
     // ── BLOOD THEME PARTICLES ────────────────────────────────────
     if (this._cosmeticsEnabled && this._activeTheme === 'crimson') {
       this._bloodTimer = (this._bloodTimer ?? 0) + delta;
-      if (this._bloodTimer > 260) {
+      if (this._bloodTimer > 130) {
         this._bloodTimer = 0;
         const active = this.decorations.filter(e => e.obj?.active && !e.isGlowDot);
         if (active.length > 0) {
+          this._spawnBloodEffect(
+            Phaser.Utils.Array.GetRandom(active).obj.x,
+            Phaser.Utils.Array.GetRandom(active).obj.y,
+          );
+          // Second source for denser coverage
           this._spawnBloodEffect(
             Phaser.Utils.Array.GetRandom(active).obj.x,
             Phaser.Utils.Array.GetRandom(active).obj.y,
@@ -1426,27 +1450,43 @@ export default class Game extends Phaser.Scene {
     // ── NEON THEME ELECTRICITY ───────────────────────────────────
     if (this._cosmeticsEnabled && this._activeTheme === 'neon') {
       this._neonSparkTimer += delta;
-      if (this._neonSparkTimer > 180) {
+      if (this._neonSparkTimer > 85) {
         this._neonSparkTimer = 0;
         const active = this.decorations.filter(e => e.obj?.active && !e.isGlowDot);
         if (active.length > 0) {
           const wx = Phaser.Utils.Array.GetRandom(active).obj.x;
           const wy = Phaser.Utils.Array.GetRandom(active).obj.y;
           const baseVelY = -this._eff.fallSpeed;
-          for (let i = 0; i < Phaser.Math.Between(2, 4); i++) {
+          // Short electric bolts
+          for (let i = 0; i < Phaser.Math.Between(4, 8); i++) {
             const obj = this.add.rectangle(
-              wx + Phaser.Math.Between(-30, 30),
+              wx + Phaser.Math.Between(-28, 28),
               wy + Phaser.Math.Between(-20, 20),
-              Phaser.Math.Between(8, 22), 1.5,
-              Math.random() < 0.35 ? 0xffffff : 0x00ffff
+              Phaser.Math.Between(5, 14), 1.5,
+              Math.random() < 0.40 ? 0xffffff : 0x00ffff
             ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD)
               .setAngle(Phaser.Math.Between(-70, 70));
             this.trail.push({
               img: obj, life: 1.0,
-              velX: Phaser.Math.FloatBetween(-50, 50),
-              velY: baseVelY + Phaser.Math.FloatBetween(-40, 40),
-              decay: 3.0, maxAlpha: 0.95,
-              rotSpeed: Phaser.Math.FloatBetween(-200, 200),
+              velX: Phaser.Math.FloatBetween(-65, 65),
+              velY: baseVelY + Phaser.Math.FloatBetween(-55, 55),
+              decay: 4.0, maxAlpha: 0.98,
+              rotSpeed: Phaser.Math.FloatBetween(-300, 300),
+            });
+          }
+          // Bright spark dots alongside the bolts
+          for (let i = 0; i < Phaser.Math.Between(3, 5); i++) {
+            const dot = this.add.circle(
+              wx + Phaser.Math.Between(-22, 22),
+              wy + Phaser.Math.Between(-16, 16),
+              Phaser.Math.FloatBetween(1.2, 3.0),
+              Math.random() < 0.5 ? 0xffffff : 0x88ffff, 1.0
+            ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
+            this.trail.push({
+              img: dot, life: 1.0,
+              velX: Phaser.Math.FloatBetween(-90, 90),
+              velY: baseVelY + Phaser.Math.FloatBetween(-90, 90),
+              decay: 5.5, maxAlpha: 1.0,
             });
           }
         }
@@ -1485,9 +1525,18 @@ export default class Game extends Phaser.Scene {
       if (this._sharkBustTimer <= 0) this._endSharkBust();
     }
 
+    // ── BURST ROW SWEEP (push rows as diver passes through them) ─
+    if (this._sharkBusting) {
+      const ny  = this.diver.y;
+      const hit = this.walls.getChildren().find(
+        w => w.active && !w.getData('busted') && Math.abs(w.y - ny) < 70
+      );
+      if (hit) this._bustWall(hit);
+    }
+
     // ── SHARK CHARGE GAUGE ───────────────────────────────────────
     this.sharkGaugeGfx.clear();
-    if (this._activeSprite === 'shark') {
+    if (this._activeSprite === 'shark' || this._activeSprite === 'kraken') {
       // Placed between lives text (left) and biome label (center) — no overlap with pause button
       const ST = SAFE_TOP, cx = 90, cy = 76 + ST, r = 8;
       const pct = this._sharkBusting
@@ -1697,6 +1746,32 @@ export default class Game extends Phaser.Scene {
     }
   }
 
+  // Kraken — three-arm spiral using the equipped trail's visuals, outward velocity applied after spawn
+  _emitKrakenSpiral(x, y) {
+    const pulse = 0.5 + 0.5 * Math.sin(this._krakenPulseT * 2.5);
+    const speed = 48 + pulse * 60;
+
+    for (let i = 0; i < 3; i++) {
+      const angle  = Phaser.Math.DegToRad(this._krakenArmAngle + i * 120);
+      const before = this.trail.length;
+      this._spawnTrailParticles(x, y);
+      // Override every particle just spawned: fly outward along this arm's angle, scaled smaller
+      for (let j = before; j < this.trail.length; j++) {
+        const jitter        = Phaser.Math.FloatBetween(-0.12, 0.12);
+        this.trail[j].velX  = Math.cos(angle + jitter) * speed;
+        this.trail[j].velY  = Math.sin(angle + jitter) * speed;
+        if (this.trail[j].img?.active) this.trail[j].img.setScale(0.62);
+      }
+    }
+
+    // Subtle center glow at the pulse peak
+    if (pulse > 0.75) {
+      const glow = this.add.circle(x, y, 3 + pulse * 5, 0xffffff, 0.20)
+        .setDepth(11).setBlendMode(Phaser.BlendModes.ADD);
+      this.trail.push({ img: glow, life: 1.0, velX: 0, velY: -8, decay: 4.5, maxAlpha: 0.18 });
+    }
+  }
+
   // ── SHARK BUST ────────────────────────────────────────────────────────────
 
   _onWallOverlap(diver, wall) {
@@ -1704,8 +1779,8 @@ export default class Game extends Phaser.Scene {
       this._bustWall(wall);
       return;
     }
-    // Any wall hit resets shark charge meter
-    if (this._activeSprite === 'shark') this._sharkChargeDist = 0;
+    // Any wall hit resets charge meter for shark and kraken
+    if (this._activeSprite === 'shark' || this._activeSprite === 'kraken') this._sharkChargeDist = 0;
     this.onHit();
   }
 
@@ -1754,10 +1829,38 @@ export default class Game extends Phaser.Scene {
     });
   }
 
+  _showBurstTitle() {
+    const txt = this.add.text(W / 2, H * 0.42, 'BURST', {
+      fontSize: '92px', fontFamily: 'Arial Black',
+      color: '#dd55ff',
+      stroke: '#110022', strokeThickness: 10,
+      shadow: { offsetX: 0, offsetY: 0, color: '#8800ff', blur: 24, fill: true },
+    }).setOrigin(0.5).setDepth(52).setScale(0);
+
+    // Punch in → settle → blow out
+    this.tweens.add({
+      targets: txt, scale: 1.2, duration: 180, ease: 'Back.Out',
+      onComplete: () => {
+        this.tweens.add({
+          targets: txt, scale: 1.0, duration: 100, ease: 'Linear',
+          onComplete: () => {
+            this.time.delayedCall(300, () => {
+              this.tweens.add({
+                targets: txt, scale: 2.4, alpha: 0, duration: 440, ease: 'Cubic.In',
+                onComplete: () => { if (txt?.active) txt.destroy(); },
+              });
+            });
+          },
+        });
+      },
+    });
+  }
+
   _activateSharkBust() {
     this._sharkBusting    = true;
     this._sharkBustTimer  = 8.0;
     this._sharkChargeDist = 0;
+    this._showBurstTitle();
     this.cameras.main.flash(350, 130, 0, 255, true);
     // Brief purple burst flash on the diver
     this.diver.setTint(0xcc44ff);
@@ -1798,38 +1901,73 @@ export default class Game extends Phaser.Scene {
   }
 
   _spawnBloodEffect(x, y) {
-    const velY  = -this._eff.fallSpeed;  // match wall scroll so particles appear to rise from sprite
-    const count = Phaser.Math.Between(1, 3);
+    const velY  = -this._eff.fallSpeed;
+    const count = Phaser.Math.Between(3, 6);
     for (let i = 0; i < count; i++) {
-      if (Math.random() < 0.45) {
-        // Ember — spinning 4-point star
-        const sz  = Phaser.Math.FloatBetween(2, 4.5);
+      const roll = Math.random();
+      if (roll < 0.40) {
+        // Ember — large spinning 4-point star
+        const sz  = Phaser.Math.FloatBetween(4, 9);
         const obj = this.add.star(
-          x + Phaser.Math.FloatBetween(-22, 22), y,
-          4, sz * 0.45, sz, Math.random() < 0.5 ? 0xff2200 : 0xff6600
+          x + Phaser.Math.FloatBetween(-30, 30), y,
+          4, sz * 0.40, sz,
+          Phaser.Utils.Array.GetRandom([0xff2200, 0xff6600, 0xff0000, 0xdd1100])
         ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
         this.trail.push({
           img: obj, life: 1.0,
-          velX: Phaser.Math.FloatBetween(-35, 35),
-          velY: velY + Phaser.Math.FloatBetween(-100, 10),
-          decay: 0.65, maxAlpha: 0.80,
-          rotSpeed: Phaser.Math.FloatBetween(80, 220) * (Math.random() < 0.5 ? 1 : -1),
+          velX: Phaser.Math.FloatBetween(-55, 55),
+          velY: velY + Phaser.Math.FloatBetween(-120, 15),
+          decay: 0.42, maxAlpha: 0.94,
+          rotSpeed: Phaser.Math.FloatBetween(120, 300) * (Math.random() < 0.5 ? 1 : -1),
+        });
+      } else if (roll < 0.80) {
+        // Blood bubble — small soft circle
+        const r   = Phaser.Math.FloatBetween(1.5, 4.5);
+        const obj = this.add.circle(
+          x + Phaser.Math.FloatBetween(-30, 30), y,
+          r,
+          Phaser.Utils.Array.GetRandom([0xcc0011, 0xff1133, 0xff0000, 0x990011]),
+          0.9
+        ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
+        this.trail.push({
+          img: obj, life: 1.0,
+          velX: Phaser.Math.FloatBetween(-28, 28),
+          velY: velY + Phaser.Math.FloatBetween(-130, -20),
+          decay: 0.32, maxAlpha: 0.90,
         });
       } else {
-        // Blood bubble — soft circle
-        const r   = Phaser.Math.FloatBetween(2, 5.5);
-        const obj = this.add.circle(
-          x + Phaser.Math.FloatBetween(-24, 24), y,
-          r, Math.random() < 0.6 ? 0xcc0011 : 0xff1133, 0.9
-        ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
+        // Drip — slow-falling elongated streak
+        const h   = Phaser.Math.FloatBetween(10, 22);
+        const obj = this.add.rectangle(
+          x + Phaser.Math.FloatBetween(-20, 20), y,
+          Phaser.Math.FloatBetween(3, 6), h,
+          Math.random() < 0.5 ? 0xcc0011 : 0xff2200
+        ).setDepth(7).setBlendMode(Phaser.BlendModes.ADD)
+          .setAngle(Phaser.Math.Between(-15, 15));
         this.trail.push({
           img: obj, life: 1.0,
-          velX: Phaser.Math.FloatBetween(-18, 18),
-          velY: velY + Phaser.Math.FloatBetween(-110, -25),
-          decay: 0.50, maxAlpha: 0.82,
+          velX: Phaser.Math.FloatBetween(-12, 12),
+          velY: velY + Phaser.Math.FloatBetween(-60, 20),
+          decay: 0.28, maxAlpha: 0.88,
         });
       }
     }
+  }
+
+  _addPhantomGlow(cx, cy, w, h, velY) {
+    // Three-layer radial glow: outer dim → inner bright, all within sprite bounds
+    const g = this.add.graphics({ x: cx, y: cy })
+      .setDepth(5).setBlendMode(Phaser.BlendModes.ADD);
+    g.fillStyle(0x8800ff, 0.09);  g.fillEllipse(0, 0, w * 0.82, h * 0.82);
+    g.fillStyle(0x9911ff, 0.16);  g.fillEllipse(0, 0, w * 0.52, h * 0.52);
+    g.fillStyle(0xbb44ff, 0.26);  g.fillEllipse(0, 0, w * 0.26, h * 0.26);
+    g.setData('velY', velY);
+    this.decorations.push({ obj: g });
+    this.tweens.add({
+      targets: g, alpha: { from: 0.25, to: 1.0 },
+      yoyo: true, repeat: -1,
+      duration: Phaser.Math.Between(550, 950), ease: 'Sine.InOut',
+    });
   }
 
   _initAmbientStars() {
@@ -1918,8 +2056,9 @@ export default class Game extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'Arial Black', color: '#00ccff',
     }).setOrigin(0.5).setDepth(36);
     pauseHit.on('pointerover',  () => pauseBg.setStrokeStyle(1.5, 0x00eeff, 1));
-    pauseHit.on('pointerout',   () => pauseBg.setStrokeStyle(1.2, 0x00ccff, 0.6));
-    pauseHit.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._pause(); });
+    pauseHit.on('pointerout',   () => pauseBg.setStrokeStyle(1.2, 0x00ccff, 0.6).setAlpha(1));
+    pauseHit.on('pointerdown',  () => { pauseBg.setAlpha(0.65); this._sfx.button?.stop(); this._sfx.button?.play(); this._pause(); });
+    pauseHit.on('pointerup',    () => pauseBg.setAlpha(1));
 
     // Shark charge gauge — circle arc in biome-label row (left of center), clear of pause button
     this.sharkGaugeGfx = this.add.graphics().setDepth(30);
@@ -1929,6 +2068,52 @@ export default class Game extends Phaser.Scene {
 
     // Shark bust purple overlay — slow pulse while bust is active
     this.sharkBustFlash = this.add.rectangle(W / 2, H / 2, W, H, 0x8800ff, 0).setDepth(49);
+  }
+
+  _buildTapTutorial() {
+    const depth = 24;
+    const cy    = H * 0.65;
+    const r     = 46;
+    const lx    = W * 0.25;
+    const rx    = W * 0.75;
+
+    const makeCircle = (x) => {
+      const g = this.add.graphics().setDepth(depth);
+      g.fillStyle(0x00aaff, 0.18);
+      g.fillCircle(x, cy, r);
+      g.lineStyle(2.5, 0xffffff, 0.50);
+      g.strokeCircle(x, cy, r);
+      return g;
+    };
+
+    const gL = makeCircle(lx);
+    const gR = makeCircle(rx);
+
+    const style = {
+      fontSize: '14px', fontFamily: 'Arial Black',
+      color: '#aaddff', stroke: '#000011', strokeThickness: 2,
+      align: 'center',
+    };
+    const tL = this.add.text(lx, cy, 'TAP TO\nMOVE', style).setOrigin(0.5).setDepth(depth + 1);
+    const tR = this.add.text(rx, cy, 'TAP TO\nMOVE', style).setOrigin(0.5).setDepth(depth + 1);
+
+    const targets = [gL, gR, tL, tR];
+    const blinkTween = this.tweens.add({
+      targets,
+      alpha: { from: 1.0, to: 0.08 },
+      yoyo: true, repeat: -1,
+      duration: 520, ease: 'Sine.InOut',
+    });
+
+    this.time.delayedCall(3600, () => {
+      blinkTween.stop();
+      this.tweens.add({
+        targets,
+        alpha: 0,
+        duration: 380,
+        onComplete: () => targets.forEach(t => { if (t?.active) t.destroy(); }),
+      });
+    });
   }
 
   _buildPauseOverlay() {
@@ -2278,8 +2463,6 @@ export default class Game extends Phaser.Scene {
     });
   }
 
-
-
   _buildPauseSlider(mk, cx, cy, d, label, volKey, mutKey, defaultVol, onChange) {
     const trackW     = W - 100;
     const trackLeft  = cx - trackW / 2;
@@ -2400,8 +2583,9 @@ export default class Game extends Phaser.Scene {
       color: '#cc0077', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(d + 2);
     this.useLifeBtn.on('pointerover',  () => this.useLifeBtn.setStrokeStyle(2.5, this.lives > 0 ? 0xcc0077 : 0x333333, 1.0));
-    this.useLifeBtn.on('pointerout',   () => this.useLifeBtn.setStrokeStyle(1.5, this.lives > 0 ? 0xcc0077 : 0x333333, 0.8));
-    this.useLifeBtn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); this._useLife(); });
+    this.useLifeBtn.on('pointerout',   () => this.useLifeBtn.setStrokeStyle(1.5, this.lives > 0 ? 0xcc0077 : 0x333333, 0.8).setAlpha(1));
+    this.useLifeBtn.on('pointerdown',  () => { this.useLifeBtn.setAlpha(0.70); this._sfx.button?.stop(); this._sfx.button?.play(); this._useLife(); });
+    this.useLifeBtn.on('pointerup',    () => this.useLifeBtn.setAlpha(1));
 
     // Watch Ad button — green neon (free action)
     const adBtns = this._makeBtn(cx, H * 0.700, 'WATCH AD  —  FREE', 280, 52, 0x001100, 0x88bb00, 20, d + 1,
@@ -2438,8 +2622,13 @@ export default class Game extends Phaser.Scene {
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(depth + 1);
     btn.on('pointerover',  () => btn.setStrokeStyle(2.5, strokeColor, 1.0));
-    btn.on('pointerout',   () => btn.setStrokeStyle(1.5, strokeColor, 0.75));
-    btn.on('pointerdown',  () => { this._sfx.button?.stop(); this._sfx.button?.play(); callback(); });
+    btn.on('pointerout',   () => btn.setStrokeStyle(1.5, strokeColor, 0.75).setAlpha(1));
+    btn.on('pointerdown',  () => {
+      btn.setAlpha(0.70);
+      this._sfx.button?.stop(); this._sfx.button?.play();
+      callback();
+    });
+    btn.on('pointerup',    () => btn.setAlpha(1));
     return [btn, txt];
   }
 }

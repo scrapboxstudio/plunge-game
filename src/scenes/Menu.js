@@ -192,8 +192,9 @@ export default class Menu extends Phaser.Scene {
     }).setOrigin(0.5);
 
     bg.on('pointerover',  () => { bg.setFillStyle(0x1a0025, 0.95); txt.setColor('#ff44aa'); });
-    bg.on('pointerout',   () => { bg.setFillStyle(0x0a0015, 0.90); txt.setColor(NC.pink);   });
-    bg.on('pointerdown',  () => this._dive());
+    bg.on('pointerout',   () => { bg.setFillStyle(0x0a0015, 0.90).setAlpha(1); txt.setColor(NC.pink); });
+    bg.on('pointerdown',  () => { bg.setAlpha(0.65); this._dive(); });
+    bg.on('pointerup',    () => bg.setAlpha(1));
   }
 
   _buildStoreButton(centerY) {
@@ -210,8 +211,9 @@ export default class Menu extends Phaser.Scene {
     }).setOrigin(0.5);
 
     bg.on('pointerover',  () => { bg.setFillStyle(0x221100, 0.95); txt.setColor('#ffcc00'); });
-    bg.on('pointerout',   () => { bg.setFillStyle(0x110800, 0.85); txt.setColor('#ddaa00'); });
-    bg.on('pointerdown',  () => { this._sfx(); this._openStore(); });
+    bg.on('pointerout',   () => { bg.setFillStyle(0x110800, 0.85).setAlpha(1); txt.setColor('#ddaa00'); });
+    bg.on('pointerdown',  () => { bg.setAlpha(0.65); this._sfx(); this._openStore(); });
+    bg.on('pointerup',    () => bg.setAlpha(1));
   }
 
   _buildSettingsButton(centerY) {
@@ -227,8 +229,9 @@ export default class Menu extends Phaser.Scene {
     }).setOrigin(0.5);
 
     bg.on('pointerover',  () => { bg.setFillStyle(0x111111, 0.95); txt.setColor('#6688aa'); borderG.setAlpha(0.8); });
-    bg.on('pointerout',   () => { bg.setFillStyle(0x080808, 0.85); txt.setColor('#445566'); borderG.setAlpha(1.0); });
-    bg.on('pointerdown',  () => { this._sfx(); this._openSettings(); });
+    bg.on('pointerout',   () => { bg.setFillStyle(0x080808, 0.85).setAlpha(1); txt.setColor('#445566'); borderG.setAlpha(1.0); });
+    bg.on('pointerdown',  () => { bg.setAlpha(0.65); this._sfx(); this._openSettings(); });
+    bg.on('pointerup',    () => bg.setAlpha(1));
   }
 
   // ── STORE OVERLAY ──────────────────────────────────────────────────────────
@@ -344,15 +347,17 @@ export default class Menu extends Phaser.Scene {
 
       card.on('pointerover', () => card.setStrokeStyle(2.5, p.color, 1.0));
       card.on('pointerout',  () => card.setStrokeStyle(1.5, p.color, 0.55));
-      card.on('pointerdown', () => { this._sfx(); p.action(); });
+      card.on('pointerdown', () => { card.setAlpha(0.70); this._sfx(); p.action(); });
+      card.on('pointerup',   () => card.setAlpha(1));
     });
 
     const closeBtn = mk(this.add.text(cx, oy + oh - 28, '✕  CLOSE', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true }));
     closeBtn.on('pointerover', () => closeBtn.setColor('#6688aa'));
-    closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44'));
-    closeBtn.on('pointerdown', () => { this._sfx(); this._closeStore(); });
+    closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44').setAlpha(1));
+    closeBtn.on('pointerdown', () => { closeBtn.setAlpha(0.65); this._sfx(); this._closeStore(); });
+    closeBtn.on('pointerup',   () => closeBtn.setAlpha(1));
   }
 
   _buildStoreCoinsPage(d, oy, oh, cw, cx) {
@@ -411,8 +416,9 @@ export default class Menu extends Phaser.Scene {
       card.on('pointerover', () => card.setStrokeStyle(2, 0xddaa00, 0.8));
       card.on('pointerout',  () => card.setStrokeStyle(1, 0xddaa00, 0.35));
       buyBtn.on('pointerover', () => buyBtn.setFillStyle(0x442200));
-      buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x221100));
-      buyBtn.on('pointerdown', () => { this._sfx(); _openConfirm?.(pkg); });
+      buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x221100).setAlpha(1));
+      buyBtn.on('pointerdown', () => { buyBtn.setAlpha(0.65); this._sfx(); _openConfirm?.(pkg); });
+      buyBtn.on('pointerup',   () => buyBtn.setAlpha(1));
     });
 
     // ── PURCHASE CONFIRMATION OVERLAY ─────────────────────────────────────────
@@ -484,7 +490,8 @@ export default class Menu extends Phaser.Scene {
       cobjs.forEach(o => o.setVisible(true));
     };
 
-    ccCancelBtn.on('pointerdown', () => { this._sfx(); _closeConfirm(); });
+    ccCancelBtn.on('pointerdown', () => { ccCancelBtn.setAlpha(0.65); this._sfx(); _closeConfirm(); });
+    ccCancelBtn.on('pointerup',   () => ccCancelBtn.setAlpha(1));
 
     this._storeCoinsConfirmObjs = cobjs;
   }
@@ -542,8 +549,9 @@ export default class Menu extends Phaser.Scene {
       card.on('pointerover', () => card.setStrokeStyle(2.5, 0xcc0077, 1.0));
       card.on('pointerout',  () => card.setStrokeStyle(1.5, 0xcc0077, 0.45));
       buyBtn.on('pointerover', () => buyBtn.setFillStyle(0x550033));
-      buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x330020));
-      buyBtn.on('pointerdown', () => { this._sfx(); this._purchaseLife(tier.lives, tier.cost); });
+      buyBtn.on('pointerout',  () => buyBtn.setFillStyle(0x330020).setAlpha(1));
+      buyBtn.on('pointerdown', () => { buyBtn.setAlpha(0.65); this._sfx(); this._purchaseLife(tier.lives, tier.cost); });
+      buyBtn.on('pointerup',   () => buyBtn.setAlpha(1));
     });
 
     this._livesNotEnoughTxt = mk(this.add.text(cx, oy + oh - 60, '', {
@@ -604,7 +612,10 @@ export default class Menu extends Phaser.Scene {
 
       card.on('pointerover', () => card.setStrokeStyle(2, 0x6611aa, 0.8));
       card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
-      if (cat.action) card.on('pointerdown', () => { this._sfx(); cat.action(); });
+      if (cat.action) {
+        card.on('pointerdown', () => { card.setAlpha(0.70); this._sfx(); cat.action(); });
+        card.on('pointerup',   () => card.setAlpha(1));
+      }
     });
   }
 
@@ -695,11 +706,13 @@ export default class Menu extends Phaser.Scene {
       card.on('pointerover', () => card.setStrokeStyle(2, 0x9944dd, 0.8));
       card.on('pointerout',  () => card.setStrokeStyle(1, 0x6611aa, 0.40));
       actionBtn.on('pointerdown', () => {
+        actionBtn.setAlpha(0.65);
         this._sfx();
         const _owned = (localStorage.getItem(page.ownedKey) || 'default').split(',');
         if (_owned.includes(item.key)) this._handleCosmeticAction(item, page);
         else _openInfoPanel?.(item);
       });
+      actionBtn.on('pointerup', () => actionBtn.setAlpha(1));
     });
 
     // ── INFO PANEL OVERLAY ─────────────────────────────────────────────────────
@@ -805,7 +818,8 @@ export default class Menu extends Phaser.Scene {
       ipEff2.setText(effs[1] ?? '').setVisible(effs.length > 1);
     };
 
-    ipClose.on('pointerdown', () => { this._sfx(); _closeInfo(); });
+    ipClose.on('pointerdown', () => { ipClose.setAlpha(0.65); this._sfx(); _closeInfo(); });
+    ipClose.on('pointerup',   () => ipClose.setAlpha(1));
 
     page.infoPanelObjs  = iobjs;
     page.closeInfoPanel = _closeInfo;
@@ -934,8 +948,9 @@ export default class Menu extends Phaser.Scene {
       fontSize: '17px', fontFamily: 'Arial Black', color: '#2a3a44',
     }).setOrigin(0, 0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true });
     btn.on('pointerover', () => btn.setColor('#6688aa'));
-    btn.on('pointerout',  () => btn.setColor('#2a3a44'));
-    btn.on('pointerdown', () => { this._sfx(); action(); });
+    btn.on('pointerout',  () => btn.setColor('#2a3a44').setAlpha(1));
+    btn.on('pointerdown', () => { btn.setAlpha(0.65); this._sfx(); action(); });
+    btn.on('pointerup',   () => btn.setAlpha(1));
     return btn;
   }
 
@@ -1045,15 +1060,17 @@ export default class Menu extends Phaser.Scene {
     }).setOrigin(0.5).setDepth(d + 1).setVisible(false));
 
     customizeBtn.on('pointerover', () => customizeBtn.setStrokeStyle(2, 0x9944dd, 0.9));
-    customizeBtn.on('pointerout',  () => customizeBtn.setStrokeStyle(1.2, 0x6611aa, 0.45));
-    customizeBtn.on('pointerdown', () => { this._sfx(); this._closeSettings(); this._openStore(); this._navTo('cosmetics'); });
+    customizeBtn.on('pointerout',  () => customizeBtn.setStrokeStyle(1.2, 0x6611aa, 0.45).setAlpha(1));
+    customizeBtn.on('pointerdown', () => { customizeBtn.setAlpha(0.65); this._sfx(); this._closeSettings(); this._openStore(); this._navTo('cosmetics'); });
+    customizeBtn.on('pointerup',   () => customizeBtn.setAlpha(1));
 
     const closeBtn = mk(this.add.text(cx, oy + oh - 28, '✕  CLOSE', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
     }).setOrigin(0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true }));
     closeBtn.on('pointerover', () => closeBtn.setColor('#6688aa'));
-    closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44'));
-    closeBtn.on('pointerdown', () => { this._sfx(); this._closeSettings(); });
+    closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44').setAlpha(1));
+    closeBtn.on('pointerdown', () => { closeBtn.setAlpha(0.65); this._sfx(); this._closeSettings(); });
+    closeBtn.on('pointerup',   () => closeBtn.setAlpha(1));
   }
 
   _buildVolumeSlider(mk, cx, cy, d, label, volKey, mutKey, defaultVol, onChange) {
@@ -1168,7 +1185,22 @@ export default class Menu extends Phaser.Scene {
 
     mk(this.add.rectangle(W / 2, H * 0.56, W * 0.62, 1.5, 0x0088bb).setAlpha(0.35).setDepth(d + 2));
 
-    const hint = mk(this.add.text(W / 2, H * 0.64, '▼  tap to descend  ▼', {
+    // Version changelog
+    mk(this.add.text(W / 2, H * 0.605, '— v3.0 UPDATE —', {
+      fontSize: '11px', fontFamily: 'Arial Black', color: '#005577',
+    }).setOrigin(0.5).setDepth(d + 2));
+
+    mk(this.add.text(W / 2, H * 0.644, 'Shark flings walls off-screen at 5,000m', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#2a4455',
+    }).setOrigin(0.5).setDepth(d + 2));
+
+    mk(this.add.text(W / 2, H * 0.673, 'Purple overlay + audio during bust mode', {
+      fontSize: '12px', fontFamily: 'Arial', color: '#2a4455',
+    }).setOrigin(0.5).setDepth(d + 2));
+
+    mk(this.add.rectangle(W / 2, H * 0.71, W * 0.62, 1, 0x0088bb).setAlpha(0.18).setDepth(d + 2));
+
+    const hint = mk(this.add.text(W / 2, H * 0.80, '▼  tap to descend  ▼', {
       fontSize: '18px', fontFamily: 'Arial Black',
       color: '#2a3a44', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5).setDepth(d + 2));

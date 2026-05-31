@@ -146,18 +146,22 @@ export const BIOMES = [
     duration:  120,   // seconds (2 min)
     music:     ['midnightBGM01', 'midnightBGM02', 'midnightBGM03'],
     bgSkins: [
-      { key: 'midnight01', w: 350 },
-      { key: 'midnight02', w: 350 },
+      { key: 'midnightStandard1', w: 350 },
+      { key: 'midnightStandard2', w: 350 },
+      { key: 'midnightWide1',     w: 440 },
+      { key: 'midnightWide2',     w: 440 },
     ],
     fillSkins: [
-      { key: 'midnight03', w: 190 },
-      { key: 'midnight04', w: 260 },
-      { key: 'midnight05', w: 120 },
-      { key: 'midnight06', w: 120 },
-      { key: 'midnight07', w: 120 },
-      { key: 'midnight08', w: 120 },
-      { key: 'midnight09', w:  70 },
-      { key: 'midnight10', w: 120 },
+      { key: 'midnightXS1', w:  70 },
+      { key: 'midnightXS2', w:  70 },
+      { key: 'midnightS1',  w: 120 },
+      { key: 'midnightS2',  w: 120 },
+      { key: 'midnightM1',  w: 190 },
+      { key: 'midnightM2',  w: 190 },
+      { key: 'midnightL1',  w: 260 },
+      { key: 'midnightL2',  w: 260 },
+      { key: 'midnightXL1', w: 340 },
+      { key: 'midnightXL2', w: 340 },
     ],
   },
   {
@@ -175,17 +179,22 @@ export const BIOMES = [
     duration:  240,   // seconds (4 min)
     music:     ['hadalBGM01', 'hadalBGM02', 'hadalBGM03', 'hadalBGM04'],
     bgSkins: [
-      { key: 'hadal01', w: 350 },
-      { key: 'hadal02', w: 350 },
+      { key: 'hadalStandard1', w: 350 },
+      { key: 'hadalStandard2', w: 350 },
+      { key: 'hadalWide1',     w: 440 },
+      { key: 'hadalWide2',     w: 440 },
     ],
     fillSkins: [
-      { key: 'hadal03', w: 260 },
-      { key: 'hadal04', w: 260 },
-      { key: 'hadal05', w: 120 },
-      { key: 'hadal06', w: 260 },
-      { key: 'hadal07', w: 190 },
-      { key: 'hadal08', w: 120 },
-      { key: 'hadal09', w:  70 },
+      { key: 'hadalXS1', w:  70 },
+      { key: 'hadalXS2', w:  70 },
+      { key: 'hadalS1',  w: 120 },
+      { key: 'hadalS2',  w: 120 },
+      { key: 'hadalM1',  w: 190 },
+      { key: 'hadalM2',  w: 190 },
+      { key: 'hadalL1',  w: 260 },
+      { key: 'hadalL2',  w: 260 },
+      { key: 'hadalXL1', w: 340 },
+      { key: 'hadalXL2', w: 340 },
     ],
   },
   {
@@ -217,10 +226,14 @@ export const BIOMES = [
       { key: 'kelpStandard2',  w: 350 },
       { key: 'kelpWide1',      w: 440 },
       { key: 'kelpWide2',      w: 440 },
-      { key: 'midnight01',     w: 350 },
-      { key: 'midnight02',     w: 350 },
-      { key: 'hadal01',        w: 350 },
-      { key: 'hadal02',        w: 350 },
+      { key: 'midnightStandard1', w: 350 },
+      { key: 'midnightStandard2', w: 350 },
+      { key: 'midnightWide1',     w: 440 },
+      { key: 'midnightWide2',     w: 440 },
+      { key: 'hadalStandard1', w: 350 },
+      { key: 'hadalStandard2', w: 350 },
+      { key: 'hadalWide1',     w: 440 },
+      { key: 'hadalWide2',     w: 440 },
     ],
     fillSkins: [
       { key: 'coralXS1', w:  70 }, { key: 'coralXS2', w:  70 },
@@ -233,41 +246,33 @@ export const BIOMES = [
       { key: 'kelpM1',   w: 190 }, { key: 'kelpM2',   w: 190 },
       { key: 'kelpL1',   w: 260 }, { key: 'kelpL2',   w: 260 },
       { key: 'kelpXL1',  w: 340 }, { key: 'kelpXL2',  w: 340 },
-      { key: 'midnight03', w: 190 }, { key: 'midnight04', w: 260 },
-      { key: 'midnight05', w: 120 }, { key: 'midnight06', w: 120 },
-      { key: 'midnight07', w: 120 }, { key: 'midnight08', w: 120 },
-      { key: 'midnight09', w:  70 }, { key: 'midnight10', w: 120 },
-      { key: 'hadal03',    w: 260 }, { key: 'hadal04',    w: 260 },
-      { key: 'hadal05',    w: 120 }, { key: 'hadal06',    w: 260 },
-      { key: 'hadal07',    w: 190 }, { key: 'hadal08',    w: 120 },
-      { key: 'hadal09',    w:  70 },
+      { key: 'midnightXS1', w:  70 }, { key: 'midnightXS2', w:  70 },
+      { key: 'midnightS1',  w: 120 }, { key: 'midnightS2',  w: 120 },
+      { key: 'midnightM1',  w: 190 }, { key: 'midnightM2',  w: 190 },
+      { key: 'midnightL1',  w: 260 }, { key: 'midnightL2',  w: 260 },
+      { key: 'midnightXL1', w: 340 }, { key: 'midnightXL2', w: 340 },
+      { key: 'hadalXS1', w:  70 }, { key: 'hadalXS2', w:  70 },
+      { key: 'hadalS1',  w: 120 }, { key: 'hadalS2',  w: 120 },
+      { key: 'hadalM1',  w: 190 }, { key: 'hadalM2',  w: 190 },
+      { key: 'hadalL1',  w: 260 }, { key: 'hadalL2',  w: 260 },
+      { key: 'hadalXL1', w: 340 }, { key: 'hadalXL2', w: 340 },
     ],
   },
 ];
 
-// ── DEBUG: biome duration scaling ─────────────────────────────────────────────
-// Multiplies every biome's minDepth threshold.
-//   < 1.0  →  shorter biomes  (0.1 = 10× faster transitions, good for quick testing)
-//   > 1.0  →  longer  biomes
-//   1.0    →  normal (ship value)
-// Remove this constant (and the two references to it) before release.
-export const BIOME_DURATION_SCALE = 1.0;
-
 export function getBiomeIndex(depth) {
   for (let i = BIOMES.length - 1; i >= 0; i--) {
-    if (depth >= BIOMES[i].minDepth * BIOME_DURATION_SCALE) return i;
+    if (depth >= BIOMES[i].minDepth) return i;
   }
   return 0;
 }
 
 // Time-based biome lookup — used in-game so biome transitions align with music.
 // ms = elapsed game time in milliseconds (pauses excluded).
-// BIOME_DURATION_SCALE compresses/stretches transitions for testing; set to 1.0 to ship.
-// Note: music always plays at full song duration regardless of BIOME_DURATION_SCALE.
 export function getBiomeIndexByTime(ms) {
   let cumMs = 0;
   for (let i = 0; i < BIOMES.length - 1; i++) {
-    cumMs += BIOMES[i].duration * 1000 * BIOME_DURATION_SCALE;
+    cumMs += BIOMES[i].duration * 1000;
     if (ms < cumMs) return i;
   }
   return BIOMES.length - 1;
