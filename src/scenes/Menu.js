@@ -1178,10 +1178,11 @@ export default class Menu extends Phaser.Scene {
       color: '#0088bb', stroke: '#000', strokeThickness: 4,
     }).setOrigin(0.5).setDepth(d + 2));
 
-    mk(this.add.text(W / 2, H * 0.46, 'THE ABYSS', {
+    const abyssTxt = mk(this.add.text(W / 2, H * 0.46, 'THE ABYSS', {
       fontSize: '68px', fontFamily: 'Arial Black',
       color: '#cc0077', stroke: '#0088bb', strokeThickness: 6,
     }).setOrigin(0.5).setDepth(d + 2));
+    abyssTxt.setScale(Math.min(1.0, (W - 28) / abyssTxt.width));
 
     mk(this.add.rectangle(W / 2, H * 0.56, W * 0.62, 1.5, 0x0088bb).setAlpha(0.35).setDepth(d + 2));
 

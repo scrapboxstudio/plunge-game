@@ -27,6 +27,18 @@ function _readSafeAreaTop() {
 // fallback guarantees the header never sits behind the notch.
 export const SAFE_TOP = IS_PHONE ? Math.max(_readSafeAreaTop(), 44) : 0;
 
+// Bottom safe area — Android gesture nav bar (≈20-34px on gesture-nav phones).
+// Used to keep pause-menu buttons above the home indicator strip.
+function _readSafeAreaBottom() {
+  const el = document.createElement('div');
+  el.style.cssText = 'position:fixed;bottom:0;left:0;width:0;padding-bottom:env(safe-area-inset-bottom,0px);pointer-events:none';
+  document.documentElement.appendChild(el);
+  const val = Math.round(parseFloat(window.getComputedStyle(el).paddingBottom) || 0);
+  el.remove();
+  return val;
+}
+export const SAFE_BOTTOM = IS_PHONE ? Math.max(_readSafeAreaBottom(), 0) : 0;
+
 // ── DIVER CONSTANTS ───────────────────────────────────────────────────────────
 export const DIVER_Y        = 260 + SAFE_TOP;  // fixed vertical position (below UI header)
 export const DIVER_ACCEL    = 640;   // px/s² horizontal acceleration
