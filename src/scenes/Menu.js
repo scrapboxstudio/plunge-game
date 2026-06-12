@@ -1,4 +1,5 @@
 import { W, H, SAFE_TOP, BIOMES } from '../main.js';
+import { COIN_PACKAGES, purchaseCoins, isIAPReady, onCoinsGranted, offCoinsGranted } from '../iap.js';
 import {
   PLAYER_SPRITES, SKINS, TRAILS, THEMES,
   STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
@@ -73,7 +74,22 @@ export default class Menu extends Phaser.Scene {
 
     // ── MUSIC ─────────────────────────────────────────────────────────────────
     this._menuMusic = null;
-    this.events.once('shutdown', () => { this._menuMusic?.stop(); this._menuMusic?.destroy(); });
+
+    // ── IAP COIN LISTENER ─────────────────────────────────────────────────────
+    this._iapListener = (count, total) => {
+      this._refreshAllCoinTxt(total);
+      if (this._coinsPageFeedback?.active) {
+        this._coinsPageFeedback.setText(`+${count} coins added!`);
+        this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
+      }
+    };
+    onCoinsGranted(this._iapListener);
+
+    this.events.once('shutdown', () => {
+      this._menuMusic?.stop();
+      this._menuMusic?.destroy();
+      offCoinsGranted(this._iapListener);
+    });
 
     // ── ENTER THE ABYSS SPLASH (first open only) ──────────────────────────────
     if (this.skipAbyss) {
@@ -385,12 +401,7 @@ export default class Menu extends Phaser.Scene {
       fontSize: '14px', fontFamily: 'Arial Black', color: '#00cc77',
     }).setOrigin(0.5).setDepth(d).setVisible(false));
 
-    const pkgs = [
-      { label: '$0.99',  coins: 100  },
-      { label: '$1.99',  coins: 200  },
-      { label: '$4.99',  coins: 500  },
-      { label: '$9.99',  coins: 1000 },
-    ];
+    const pkgs = COIN_PACKAGES;
 
     let _openConfirm;  // assigned after the confirmation overlay is built below
 
@@ -476,15 +487,20 @@ export default class Menu extends Phaser.Scene {
       ccPrice.setText(pkg.label);
 
       ccConfirmBtn.removeAllListeners('pointerdown');
-      ccConfirmBtn.on('pointerdown', () => {
+      ccConfirmBtn.on('pointerdown', async () => {
         this._sfx();
         _closeConfirm();
-        const cur = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
-        const updated = cur + pkg.coins;
-        localStorage.setItem(STORAGE_COINS, updated);
-        this._refreshAllCoinTxt(updated);
-        this._coinsPageFeedback.setText(`+${pkg.coins} coins added!`);
-        this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
+        if (isIAPReady()) {
+          this._coinsPageFeedback.setText('Opening store...');
+          await purchaseCoins(pkg.id);
+        } else {
+          const cur = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+          const updated = cur + pkg.coins;
+          localStorage.setItem(STORAGE_COINS, updated);
+          this._refreshAllCoinTxt(updated);
+          this._coinsPageFeedback.setText(`+${pkg.coins} coins added!`);
+          this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
+        }
       });
 
       cobjs.forEach(o => o.setVisible(true));

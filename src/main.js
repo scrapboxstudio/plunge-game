@@ -9,6 +9,7 @@ if (Capacitor.isNativePlatform()) {
   import('@capacitor-community/admob').then(({ AdMob }) => {
     AdMob.initialize({ requestTrackingAuthorization: false });
   });
+  import('./iap.js').then(({ initIAP }) => initIAP());
 }
 
 // Phones: fill the screen edge-to-edge (≤ 500 logical px wide covers every phone,
