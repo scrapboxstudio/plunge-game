@@ -13,6 +13,12 @@
       "style": "DARK",
       "backgroundColor": "#010c18",
       "overlaysWebView": true
+    },
+    "AdMob": {
+      "appId": {
+        "android": "ca-app-pub-1522961874159114~5605247717"
+      },
+      "initializeForTesting": false
     }
   }
 }

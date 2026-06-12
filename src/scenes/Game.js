@@ -1223,18 +1223,44 @@ export default class Game extends Phaser.Scene {
     this._revive();
   }
 
-  _watchAd() {
+  async _watchAd() {
     if (this._reviving) return;
     this._reviving = true;
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
+
     const adTxt = this.add.text(W / 2, H / 2, 'LOADING AD...', {
       fontSize: '20px', fontFamily: 'Arial', color: '#0088bb',
     }).setOrigin(0.5).setDepth(65);
-    // TODO (publishing): replace stub with AdMob.showRewardVideo({ adId: 'ca-app-pub-...' })
-    //   On reward callback: adTxt.destroy(); this._revive();
-    //   On dismiss/failure: adTxt.destroy(); show contObjs again
-    this.time.delayedCall(1500, () => { adTxt.destroy(); this._reviving = false; this._revive(); });
+
+    const { AdMob, RewardAdPluginEvents } = await import('@capacitor-community/admob');
+
+    const onRewarded = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
+      onRewarded.remove();
+      onFailed.remove();
+      adTxt.destroy();
+      this._reviving = false;
+      this._revive();
+    });
+
+    const onFailed = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
+      onRewarded.remove();
+      onFailed.remove();
+      adTxt.destroy();
+      this._reviving = false;
+      this.contObjs.forEach(o => o.setVisible(true));
+    });
+
+    try {
+      await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
+      await AdMob.showRewardVideoAd();
+    } catch (e) {
+      onRewarded.remove();
+      onFailed.remove();
+      adTxt.destroy();
+      this._reviving = false;
+      this.contObjs.forEach(o => o.setVisible(true));
+    }
   }
 
   _updateLivesHUD() {

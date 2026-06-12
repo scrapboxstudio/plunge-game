@@ -3,6 +3,13 @@ import Boot    from './scenes/Boot.js';
 import Menu    from './scenes/Menu.js';
 import Game    from './scenes/Game.js';
 import GameOver from './scenes/GameOver.js';
+import { Capacitor } from '@capacitor/core';
+
+if (Capacitor.isNativePlatform()) {
+  import('@capacitor-community/admob').then(({ AdMob }) => {
+    AdMob.initialize({ requestTrackingAuthorization: false });
+  });
+}
 
 // Phones: fill the screen edge-to-edge (≤ 500 logical px wide covers every phone,
 // including iPhone 15 Pro Max at 430pt, while excluding tablets at 744pt+).
