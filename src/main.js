@@ -4,6 +4,18 @@ import Menu    from './scenes/Menu.js';
 import Game    from './scenes/Game.js';
 import GameOver from './scenes/GameOver.js';
 import { Capacitor } from '@capacitor/core';
+import { initStorage } from './storage.js';
+
+const ALL_STORAGE_KEYS = [
+  'plunge_coins', 'plunge_best', 'plunge_lives',
+  'plunge_vol_music', 'plunge_vol_sfx', 'plunge_mute_music', 'plunge_mute_sfx',
+  'plunge_particle_trail', 'plunge_cosmetics',
+  'plunge_active_sprite', 'plunge_owned_sprites',
+  'plunge_active_skin',   'plunge_owned_skins',
+  'plunge_active_trail',  'plunge_owned_trails',
+  'plunge_active_theme',  'plunge_owned_themes',
+  'plunge_active_bg_image', 'plunge_owned_bg_images',
+];
 
 if (Capacitor.isNativePlatform()) {
   import('@capacitor-community/admob').then(({ AdMob }) => {
@@ -319,4 +331,7 @@ const config = {
   scene: [Boot, Menu, Game, GameOver],
 };
 
-new Phaser.Game(config);
+(async () => {
+  await initStorage(ALL_STORAGE_KEYS);
+  new Phaser.Game(config);
+})();

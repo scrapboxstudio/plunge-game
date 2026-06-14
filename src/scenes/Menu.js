@@ -1,4 +1,5 @@
 import { W, H, SAFE_TOP, BIOMES } from '../main.js';
+import { getItem, setItem } from '../storage.js';
 import { COIN_PACKAGES, purchaseCoins, isIAPReady, onCoinsGranted, offCoinsGranted } from '../iap.js';
 import {
   PLAYER_SPRITES, SKINS, TRAILS, THEMES,
@@ -58,7 +59,7 @@ export default class Menu extends Phaser.Scene {
     this._buildBestDepth(H * 0.400);
 
     // ── COIN BALANCE ──────────────────────────────────────────────────────────
-    const initCoins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const initCoins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     this._menuCoinTxt = this.add.text(W / 2, H * 0.478, `⬡ ${initCoins.toLocaleString()} coins`, {
       fontSize: '16px', fontFamily: 'Arial', color: '#44350a',
     }).setOrigin(0.5);
@@ -160,7 +161,7 @@ export default class Menu extends Phaser.Scene {
   // ── BEST SCORE ─────────────────────────────────────────────────────────────
 
   _buildBestDepth(centerY) {
-    const best    = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+    const best    = parseInt(getItem(STORAGE_BEST) || '0', 10);
     const hasBest = best > 0;
 
     this.add.text(W / 2, centerY - 36, 'BEST DEPTH', {
@@ -494,9 +495,9 @@ export default class Menu extends Phaser.Scene {
           this._coinsPageFeedback.setText('Opening store...');
           await purchaseCoins(pkg.id);
         } else {
-          const cur = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+          const cur = parseInt(getItem(STORAGE_COINS) || '0', 10);
           const updated = cur + pkg.coins;
-          localStorage.setItem(STORAGE_COINS, updated);
+          setItem(STORAGE_COINS, updated);
           this._refreshAllCoinTxt(updated);
           this._coinsPageFeedback.setText(`+${pkg.coins} coins added!`);
           this.time.delayedCall(2000, () => { if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText(''); });
@@ -724,7 +725,7 @@ export default class Menu extends Phaser.Scene {
       actionBtn.on('pointerdown', () => {
         actionBtn.setAlpha(0.65);
         this._sfx();
-        const _owned = (localStorage.getItem(page.ownedKey) || 'default').split(',');
+        const _owned = (getItem(page.ownedKey) || 'default').split(',');
         if (_owned.includes(item.key)) this._handleCosmeticAction(item, page);
         else _openInfoPanel?.(item);
       });
@@ -802,8 +803,8 @@ export default class Menu extends Phaser.Scene {
 
       ipPrice.setText(item.price === 0 ? 'FREE' : `${item.price.toLocaleString()} ⬡`);
 
-      const _ownedNow  = (localStorage.getItem(page.ownedKey) || 'default').split(',');
-      const _activeNow = localStorage.getItem(page.activeKey) || 'default';
+      const _ownedNow  = (getItem(page.ownedKey) || 'default').split(',');
+      const _activeNow = getItem(page.activeKey) || 'default';
       if (item.key === _activeNow) {
         ipActTxt.setText('✓ EQUIPPED').setColor('#00cc66');
         ipActBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
@@ -819,8 +820,8 @@ export default class Menu extends Phaser.Scene {
       ipActBtn.on('pointerdown', () => {
         this._sfx();
         this._handleCosmeticAction(item, page);
-        const o2 = (localStorage.getItem(page.ownedKey) || 'default').split(',');
-        const a2 = localStorage.getItem(page.activeKey) || 'default';
+        const o2 = (getItem(page.ownedKey) || 'default').split(',');
+        const a2 = getItem(page.activeKey) || 'default';
         if (item.key === a2) {
           ipActTxt.setText('✓ EQUIPPED').setColor('#00cc66');
           ipActBtn.setFillStyle(0x002200).setStrokeStyle(1.5, 0x00cc66, 0.9);
@@ -844,23 +845,23 @@ export default class Menu extends Phaser.Scene {
   }
 
   _handleCosmeticAction(item, page) {
-    const owned = (localStorage.getItem(page.ownedKey) || 'default').split(',');
+    const owned = (getItem(page.ownedKey) || 'default').split(',');
     if (owned.includes(item.key)) {
-      localStorage.setItem(page.activeKey, item.key);
+      setItem(page.activeKey, item.key);
       this._refreshCosmeticCards(page);
       return;
     }
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     if (coins < item.price) {
       page.msgTxt.setColor('#cc0077').setText('Not enough coins!');
       this.time.delayedCall(1800, () => page.msgTxt?.setText(''));
       return;
     }
     const newCoins = coins - item.price;
-    localStorage.setItem(STORAGE_COINS, newCoins);
+    setItem(STORAGE_COINS, newCoins);
     owned.push(item.key);
-    localStorage.setItem(page.ownedKey, owned.join(','));
-    localStorage.setItem(page.activeKey, item.key);
+    setItem(page.ownedKey, owned.join(','));
+    setItem(page.activeKey, item.key);
     this._refreshAllCoinTxt(newCoins);
     page.msgTxt.setColor('#00cc77').setText(`${item.name} unlocked & equipped!`);
     this.time.delayedCall(2000, () => page.msgTxt?.setText(''));
@@ -868,10 +869,10 @@ export default class Menu extends Phaser.Scene {
   }
 
   _refreshCosmeticCards(page) {
-    const owned = (localStorage.getItem(page.ownedKey) || 'default').split(',');
-    let active  = localStorage.getItem(page.activeKey) || 'default';
-    if (!owned.includes(active)) { active = 'default'; localStorage.setItem(page.activeKey, 'default'); }
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const owned = (getItem(page.ownedKey) || 'default').split(',');
+    let active  = getItem(page.activeKey) || 'default';
+    if (!owned.includes(active)) { active = 'default'; setItem(page.activeKey, 'default'); }
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     page.data.forEach((item, i) => {
       const ref = page.cardRefs[i];
       if (!ref) return;
@@ -913,7 +914,7 @@ export default class Menu extends Phaser.Scene {
       p.infoPanelObjs?.forEach(o => o.setVisible(false));
     });
 
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     this._storeCoinBadge?.setText(`⬡ ${coins.toLocaleString()}`);
 
     if (page === 'main') {
@@ -923,7 +924,7 @@ export default class Menu extends Phaser.Scene {
       this._coinsPageBalTxt.setText(`Your balance:  ⬡ ${coins.toLocaleString()}`);
       this._storeCoinsObjs.forEach(o => o.setVisible(true));
     } else if (page === 'lives') {
-      const lives = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
+      const lives = parseInt(getItem(STORAGE_LIVES) || '0', 10);
       this._livesCoinsDisplay.setText(`⬡ ${coins.toLocaleString()}  coins`);
       this._livesDisplay.setText(`♥  ${lives}  extra lives`);
       this._livesNotEnoughTxt.setText('');
@@ -942,16 +943,16 @@ export default class Menu extends Phaser.Scene {
   }
 
   _purchaseLife(lives, cost) {
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     if (coins < cost) {
       this._livesNotEnoughTxt.setColor('#cc0077').setText('Not enough coins!');
       this.time.delayedCall(1800, () => this._livesNotEnoughTxt.setText(''));
       return;
     }
     const newCoins  = coins - cost;
-    const newLives  = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10) + lives;
-    localStorage.setItem(STORAGE_COINS, newCoins);
-    localStorage.setItem(STORAGE_LIVES,  newLives);
+    const newLives  = parseInt(getItem(STORAGE_LIVES) || '0', 10) + lives;
+    setItem(STORAGE_COINS, newCoins);
+    setItem(STORAGE_LIVES,  newLives);
     this._refreshAllCoinTxt(newCoins);
     this._livesDisplay.setText(`♥  ${newLives}  extra lives`);
     const msg = lives === 1 ? '♥ Life added!' : `♥ ${lives} Lives added!`;
@@ -979,7 +980,7 @@ export default class Menu extends Phaser.Scene {
   }
 
   _closeStore() {
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     this._menuCoinTxt?.setText(`⬡ ${coins.toLocaleString()} coins`);
     this._storeDim.setVisible(false);
     this._storePanel.setVisible(false);
@@ -1030,7 +1031,7 @@ export default class Menu extends Phaser.Scene {
     const trkL  = cx - trkW / 2;
     const trkR  = cx + trkW / 2;
     const trlY  = oy + 432;
-    let   trlOn = localStorage.getItem(STORAGE_TRAIL) !== '0';
+    let   trlOn = getItem(STORAGE_TRAIL) !== '0';
 
     mk(this.add.text(trkL, trlY, '✦  PARTICLE TRAIL', {
       fontSize: '17px', fontFamily: 'Arial Black', color: '#6688aa',
@@ -1049,7 +1050,7 @@ export default class Menu extends Phaser.Scene {
     trlBg.on('pointerdown', () => {
       if (!this.settingsOpen) return;
       trlOn = !trlOn;
-      localStorage.setItem(STORAGE_TRAIL, trlOn ? '1' : '0');
+      setItem(STORAGE_TRAIL, trlOn ? '1' : '0');
       trlBg.setFillStyle(trlOn ? 0x001122 : 0x111111);
       trlBg.setStrokeStyle(1.5, trlOn ? 0x0088bb : 0x334455, trlOn ? 0.8 : 0.5);
       trlTxt.setText(trlOn ? 'ON' : 'OFF').setColor(trlOn ? '#00ccff' : '#334455');
@@ -1094,8 +1095,8 @@ export default class Menu extends Phaser.Scene {
     const trackLeft = cx - trackW / 2;
     const trackRight = cx + trackW / 2;
 
-    let vol   = parseFloat(localStorage.getItem(volKey));
-    let muted = localStorage.getItem(mutKey) === '1';
+    let vol   = parseFloat(getItem(volKey));
+    let muted = getItem(mutKey) === '1';
     if (isNaN(vol) || vol < 0 || vol > 1) vol = defaultVol;
 
     const activeColor  = 0x0088bb;
@@ -1135,7 +1136,7 @@ export default class Menu extends Phaser.Scene {
       thumb.x         = trackLeft + trackW * vol;
       fill.width      = trackW * vol;
       pctTxt.setText(`${Math.round(vol * 100)}%`);
-      localStorage.setItem(volKey, vol.toFixed(3));
+      setItem(volKey, vol.toFixed(3));
       onChange(vol, muted);
     };
 
@@ -1144,7 +1145,7 @@ export default class Menu extends Phaser.Scene {
       lbl.setColor(muted ? '#334455' : '#6688aa');
       fill.setFillStyle(muted ? mutedColor : activeColor);
       thumb.setFillStyle(muted ? thumbMuted : thumbActive);
-      localStorage.setItem(mutKey, muted ? '1' : '0');
+      setItem(mutKey, muted ? '1' : '0');
       onChange(vol, muted);
     };
 
@@ -1184,7 +1185,7 @@ export default class Menu extends Phaser.Scene {
 
     mk(this.add.rectangle(W / 2, H / 2, W, H, 0x000010).setAlpha(0.87).setDepth(d).setInteractive());
 
-    const _activeSprKey = (PLAYER_SPRITES.find(s => s.key === (localStorage.getItem(STORAGE_ACTIVE_SPRITE) || 'default')) ?? PLAYER_SPRITES[0]).spriteKey;
+    const _activeSprKey = (PLAYER_SPRITES.find(s => s.key === (getItem(STORAGE_ACTIVE_SPRITE) || 'default')) ?? PLAYER_SPRITES[0]).spriteKey;
     mk(this.add.image(W / 2, H * 0.42, _activeSprKey + 'Alive')
       .setAlpha(0.07).setScale(2.6).setDepth(d + 1)
       .setBlendMode(Phaser.BlendModes.ADD));

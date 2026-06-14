@@ -1,4 +1,5 @@
 import { Capacitor } from '@capacitor/core';
+import { getItem, setItem } from './storage.js';
 
 const STORAGE_COINS = 'plunge_coins';
 
@@ -18,9 +19,9 @@ export function offCoinsGranted(cb) { _listeners.delete(cb); }
 export function isIAPReady()        { return Capacitor.isNativePlatform() && _store !== null; }
 
 function _grant(coins) {
-  const cur     = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+  const cur     = parseInt(getItem(STORAGE_COINS, '0'), 10);
   const updated = cur + coins;
-  localStorage.setItem(STORAGE_COINS, String(updated));
+  setItem(STORAGE_COINS, String(updated));
   _listeners.forEach(cb => cb(coins, updated));
 }
 

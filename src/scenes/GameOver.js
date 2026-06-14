@@ -1,4 +1,5 @@
 import { W, H } from '../main.js';
+import { getItem, setItem } from '../storage.js';
 
 const STORAGE_BEST  = 'plunge_best';
 const STORAGE_COINS = 'plunge_coins';
@@ -82,9 +83,9 @@ export default class GameOver extends Phaser.Scene {
     this._drawStarBurst(22,     H * 0.6, 10, NEON.green,  0.45);
 
     // ── SCORE DATA ────────────────────────────────────────────────────────────
-    const prev  = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+    const prev  = parseInt(getItem(STORAGE_BEST) || '0', 10);
     const isNew = this.finalDepth > prev;
-    if (isNew) localStorage.setItem(STORAGE_BEST, this.finalDepth);
+    if (isNew) setItem(STORAGE_BEST, this.finalDepth);
     const best = isNew ? this.finalDepth : prev;
 
     // ── HEADING ───────────────────────────────────────────────────────────────
@@ -167,7 +168,7 @@ export default class GameOver extends Phaser.Scene {
     });
 
     // Coin tally reminder
-    const coins = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
+    const coins = parseInt(getItem(STORAGE_COINS) || '0', 10);
     this.add.text(W / 2, H * 0.910, `⬡ ${coins} coins remaining`, {
       fontSize: '14px', fontFamily: 'Arial', color: '#44350a',
     }).setOrigin(0.5);

@@ -3,6 +3,7 @@ import {
   DIVER_Y, DIVER_ACCEL, DIVER_DRAG, DIVER_MAX_VX, DIVER_TILT, DIVER_MAX_TILT, DIVER_MARGIN,
   PRESSURE_DECAY, PRESSURE_HIT,
 } from '../main.js';
+import { getItem, setItem } from '../storage.js';
 import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import {
   PLAYER_SPRITES, THEMES, SKIN_TINTS,
@@ -37,14 +38,14 @@ const TIPS = [
 ];
 
 function _readVol(key, def) {
-  const v = parseFloat(localStorage.getItem(key));
+  const v = parseFloat(getItem(key));
   return (isNaN(v) || v < 0 || v > 1) ? def : v;
 }
 function musicVol() {
-  return localStorage.getItem(STORAGE_MUTE_MUSIC) === '1' ? 0 : _readVol(STORAGE_VOL_MUSIC, 0.7);
+  return getItem(STORAGE_MUTE_MUSIC) === '1' ? 0 : _readVol(STORAGE_VOL_MUSIC, 0.7);
 }
 function sfxVol() {
-  return localStorage.getItem(STORAGE_MUTE_SFX) === '1' ? 0 : _readVol(STORAGE_VOL_SFX, 0.7);
+  return getItem(STORAGE_MUTE_SFX) === '1' ? 0 : _readVol(STORAGE_VOL_SFX, 0.7);
 }
 
 const WALL_H    = 110;
@@ -76,7 +77,7 @@ export default class Game extends Phaser.Scene {
     // State
     this.depth      = 0;
     this.gameTime   = 0;
-    this._prevBest     = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
+    this._prevBest     = parseInt(getItem(STORAGE_BEST) || '0', 10);
     this._newRecord    = false;
     this._lastGapCenter = undefined;  // used to alternate gap sides and force movement
     this._recentSkins   = {};         // biomeIdx → recently-used skin keys (avoids repeats)
@@ -86,9 +87,9 @@ export default class Game extends Phaser.Scene {
     this.biomeIdx   = 0;
     this._eff       = { ...BIOMES[0] };  // interpolated difficulty values, updated each tick
     this.gamePaused = false;
-    this.coins        = parseInt(localStorage.getItem(STORAGE_COINS) || '0', 10);
-    this.lives        = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
-    this._cosmeticsEnabled = localStorage.getItem(STORAGE_COSMETICS) !== '0';
+    this.coins        = parseInt(getItem(STORAGE_COINS) || '0', 10);
+    this.lives        = parseInt(getItem(STORAGE_LIVES) || '0', 10);
+    this._cosmeticsEnabled = getItem(STORAGE_COSMETICS) !== '0';
     this._objSkinTint = 0xffffff;
     this._bgSkinTint  = 0xffffff;
     this._syncTints();
@@ -191,10 +192,10 @@ export default class Game extends Phaser.Scene {
       .setBlendMode(Phaser.BlendModes.ADD)
       .setVisible(false);
 
-    this._activeSprite = localStorage.getItem(STORAGE_ACTIVE_SPRITE) || 'default';
-    this._activeSkin   = localStorage.getItem(STORAGE_ACTIVE_SKIN)  || 'default';
-    this._activeTrail  = localStorage.getItem(STORAGE_ACTIVE_TRAIL) || 'default';
-    this._activeTheme  = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
+    this._activeSprite = getItem(STORAGE_ACTIVE_SPRITE) || 'default';
+    this._activeSkin   = getItem(STORAGE_ACTIVE_SKIN)  || 'default';
+    this._activeTrail  = getItem(STORAGE_ACTIVE_TRAIL) || 'default';
+    this._activeTheme  = getItem(STORAGE_ACTIVE_THEME) || 'default';
     this._rainbowHue   = Math.random();  // random start so all legendary items don't sync on boot
     const { alive: _aliveKey, dead: _deadKey } = this._spriteTexKeys();
     this.diver.setTexture(_aliveKey);
@@ -446,7 +447,7 @@ export default class Game extends Phaser.Scene {
       this._bgSkinTint  = 0xffffff;
       return;
     }
-    const themeKey = localStorage.getItem(STORAGE_ACTIVE_THEME) || 'default';
+    const themeKey = getItem(STORAGE_ACTIVE_THEME) || 'default';
     const theme    = THEMES.find(t => t.key === themeKey);
     const override = theme?.biomeTints?.[this.biomeIdx];
     const tint     = (override != null) ? override : (theme?.tint ?? 0xffffff);
@@ -812,7 +813,7 @@ export default class Game extends Phaser.Scene {
 
     this._coinsCollectedTotal++;
     this.coins++;
-    localStorage.setItem(STORAGE_COINS, this.coins);
+    setItem(STORAGE_COINS, this.coins);
     this._updateCoinProgress();
 
     const color = '#' + BIOMES[this.biomeIdx].obsColor.toString(16).padStart(6, '0');
@@ -1117,7 +1118,7 @@ export default class Game extends Phaser.Scene {
   // ── CONTINUE SCREEN ───────────────────────────────────────────────────────
 
   _showContinue() {
-    this.lives = parseInt(localStorage.getItem(STORAGE_LIVES) || '0', 10);
+    this.lives = parseInt(getItem(STORAGE_LIVES) || '0', 10);
     this._updateContinueLives();
     this.contTipTxt.setText('tip: ' + Phaser.Utils.Array.GetRandom(TIPS));
     this.contObjs.forEach(o => o.setVisible(true));
@@ -1217,7 +1218,7 @@ export default class Game extends Phaser.Scene {
   _useLife() {
     if (this.lives <= 0) return;
     const newLives = this.lives - 1;
-    localStorage.setItem(STORAGE_LIVES, newLives);
+    setItem(STORAGE_LIVES, newLives);
     this.lives = newLives;
     this._updateLivesHUD();
     this._revive();
@@ -2232,7 +2233,7 @@ export default class Game extends Phaser.Scene {
     this._cosmeticToggleBg.on('pointerdown', () => {
       if (!this.gamePaused) return;
       this._cosmeticsEnabled = !this._cosmeticsEnabled;
-      localStorage.setItem(STORAGE_COSMETICS, this._cosmeticsEnabled ? '1' : '0');
+      setItem(STORAGE_COSMETICS, this._cosmeticsEnabled ? '1' : '0');
       this._updateCosmeticToggleUI();
 
       if (this._cosmeticsEnabled) {
@@ -2273,8 +2274,8 @@ export default class Game extends Phaser.Scene {
     const trackLeft  = cx - trackW / 2;
     const trackRight = cx + trackW / 2;
 
-    let vol   = parseFloat(localStorage.getItem(volKey));
-    let muted = localStorage.getItem(mutKey) === '1';
+    let vol   = parseFloat(getItem(volKey));
+    let muted = getItem(mutKey) === '1';
     if (isNaN(vol) || vol < 0 || vol > 1) vol = defaultVol;
 
     const activeColor = 0x0088bb;
@@ -2313,7 +2314,7 @@ export default class Game extends Phaser.Scene {
       thumb.x    = trackLeft + trackW * vol;
       fill.width = trackW * vol;
       pctTxt.setText(`${Math.round(vol * 100)}%`);
-      localStorage.setItem(volKey, vol.toFixed(3));
+      setItem(volKey, vol.toFixed(3));
       onChange(vol, muted);
     };
 
@@ -2322,7 +2323,7 @@ export default class Game extends Phaser.Scene {
       lbl.setColor(muted ? '#334455' : '#6688aa');
       fill.setFillStyle(muted ? mutedColor : activeColor);
       thumb.setFillStyle(muted ? thumbMuted : thumbActive);
-      localStorage.setItem(mutKey, muted ? '1' : '0');
+      setItem(mutKey, muted ? '1' : '0');
       onChange(vol, muted);
     };
 
@@ -2403,8 +2404,8 @@ export default class Game extends Phaser.Scene {
     const giveUpBtns = this._makeBtn(cx, H * 0.855, '✕  GIVE UP', 200, 44, 0x100000, 0x882222, 18, d + 1,
       () => {
         this.contEvt?.remove();
-        const prev = parseInt(localStorage.getItem(STORAGE_BEST) || '0', 10);
-        if (this.depth > prev) localStorage.setItem(STORAGE_BEST, this.depth);
+        const prev = parseInt(getItem(STORAGE_BEST) || '0', 10);
+        if (this.depth > prev) setItem(STORAGE_BEST, this.depth);
         this._stopMusic();
         this.cameras.main.fadeOut(250);
         this.time.delayedCall(250, () => this.scene.start('Menu', { skipAbyss: true }));
