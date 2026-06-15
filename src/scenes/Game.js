@@ -509,15 +509,28 @@ export default class Game extends Phaser.Scene {
   }
 
   _playMusicTrack(trackIdx) {
-    const SONG_MS  = 120000;  // each song is exactly 2 minutes
+    const key = this._getMusicKey(trackIdx);
 
-    const key   = this._getMusicKey(trackIdx);
-    const music = this.sound.add(key, { volume: 0, loop: false });
+    // If this track isn't cached yet, start fetching it and poll until ready.
+    // The previous track keeps playing during the load so there's no hard cut.
+    if (!this.cache.audio.exists(key)) {
+      if (!this._audioLoading) this._audioLoading = new Set();
+      if (!this._audioLoading.has(key)) {
+        this._audioLoading.add(key);
+        this.load.audio(key, `assets/${key}.mp3`);
+        this.load.start();
+        this.load.once(Phaser.Loader.Events.COMPLETE, () => this._audioLoading?.delete(key));
+      }
+      this.time.delayedCall(250, () => this._playMusicTrack(trackIdx));
+      return;
+    }
+
+    const SONG_MS = 120000;
+    const music   = this.sound.add(key, { volume: 0, loop: false });
     this._musicSounds.push(music);
     music.play();
     this.tweens.add({ targets: music, volume: musicVol(), duration: FADE_MS });
 
-    // Fade out and destroy the outgoing track.
     const prev = this._currentMusic;
     if (prev) {
       this.tweens.add({
@@ -530,7 +543,19 @@ export default class Game extends Phaser.Scene {
     }
     this._currentMusic = music;
 
-    // Schedule next track so it starts FADE_MS before this one ends — 7 s of overlap.
+    // Immediately start fetching the next track in the background so it's
+    // ready well before the crossfade point (FADE_MS = 7 s before end).
+    const nextKey = this._getMusicKey(trackIdx + 1);
+    if (!this.cache.audio.exists(nextKey)) {
+      if (!this._audioLoading) this._audioLoading = new Set();
+      if (!this._audioLoading.has(nextKey)) {
+        this._audioLoading.add(nextKey);
+        this.load.audio(nextKey, `assets/${nextKey}.mp3`);
+        this.load.start();
+        this.load.once(Phaser.Loader.Events.COMPLETE, () => this._audioLoading?.delete(nextKey));
+      }
+    }
+
     this.time.delayedCall(SONG_MS - FADE_MS, () => this._playMusicTrack(trackIdx + 1));
   }
 

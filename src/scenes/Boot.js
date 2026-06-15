@@ -4,24 +4,41 @@ export default class Boot extends Phaser.Scene {
   constructor() { super('Boot'); }
 
   preload() {
+    // Dark background + progress bar — visible immediately, no frozen black screen
+    this.cameras.main.setBackgroundColor('#010c18');
+    const cx = W / 2, cy = H / 2;
+    this.add.text(cx, cy - 72, 'PLUNGE', {
+      fontFamily: 'Arial Black', fontSize: '28px', color: '#0088bb',
+    }).setOrigin(0.5);
+    this.add.rectangle(cx, cy - 24, 244, 18, 0x001122).setStrokeStyle(1, 0x0088bb, 0.5);
+    const bar = this.add.rectangle(cx - 122, cy - 24, 0, 14, 0x0088bb).setOrigin(0, 0.5);
+    const pct = this.add.text(cx, cy + 4, 'LOADING...', {
+      fontFamily: 'Arial', fontSize: '12px', color: '#004466',
+    }).setOrigin(0.5);
+    this.load.on('progress', v => {
+      bar.width = 240 * v;
+      pct.setText(`${Math.round(v * 100)}%`);
+    });
+
     ['fish', 'star', 'octo', 'shark', 'kraken'].forEach(k => {
       this.load.image(k + 'Alive', `assets/${k}Alive.png`);
       this.load.image(k + 'Dead',  `assets/${k}Dead.png`);
     });
-    this.load.audio('mainMenu',  'assets/mainMenu.mp3');
-    this.load.audio('buttonSFX', 'assets/buttonSFX.mp3');
-    this.load.audio('wooshSFX',  'assets/wooshSFX.wav');
-    this.load.audio('hitSFX',    'assets/hitSFX.wav');
+    this.load.audio('mainMenu',      'assets/mainMenu.mp3');
+    this.load.audio('buttonSFX',     'assets/buttonSFX.mp3');
+    this.load.audio('wooshSFX',      'assets/wooshSFX.wav');
+    this.load.audio('hitSFX',        'assets/hitSFX.wav');
     this.load.audio('coinSFX',       'assets/coinSFX.wav');
     this.load.audio('invincibleSFX', 'assets/invincibleSFX.wav');
     this.load.audio('1upSFX',        'assets/1upSFX.wav');
 
-    // All biome assets are declared in main.js BIOMES — adding a new biome there
-    // automatically loads its background, skin sprites, and music tracks here.
-    BIOMES.forEach(b => {
+    // Images for all biomes load upfront (needed as soon as walls spawn).
+    // Music is lazy-loaded: only Biome 0's track loads here; every other
+    // track is fetched in the background while the previous one plays.
+    BIOMES.forEach((b, i) => {
       this.load.image(b.bgKey, `assets/${b.bgKey.slice(3)}.png`);
       [...b.bgSkins, ...b.fillSkins].forEach(s => this.load.image(s.key, s.path ?? `assets/${s.key}.png`));
-      b.music.forEach(key => this.load.audio(key, `assets/${key}.mp3`));
+      if (i === 0) b.music.forEach(key => this.load.audio(key, `assets/${key}.mp3`));
     });
   }
 
