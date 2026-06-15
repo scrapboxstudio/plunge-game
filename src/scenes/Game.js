@@ -870,6 +870,7 @@ export default class Game extends Phaser.Scene {
       .setDepth(8)
       .setScale(1.3);
     this.physics.add.existing(shell, true);
+    shell.body.setSize(56, 56, true); // generous hitbox — texture is 28×28, visual pulses to ~48px
     this.shellPickups.add(shell);
     shell.setData('velY', speed);
 
@@ -1230,24 +1231,41 @@ export default class Game extends Phaser.Scene {
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
 
+    // Silence music immediately — ad has its own audio
+    this._musicSounds.forEach(s => s.setVolume(0));
+
     const adTxt = this.add.text(W / 2, H / 2, 'LOADING AD...', {
       fontSize: '20px', fontFamily: 'Arial', color: '#0088bb',
     }).setOrigin(0.5).setDepth(65);
 
     const { AdMob, RewardAdPluginEvents } = await import('@capacitor-community/admob');
 
+    const _restoreMusic = () => {
+      this._musicSounds.forEach(s => {
+        this.tweens.add({ targets: s, volume: musicVol(), duration: 800 });
+      });
+    };
+
     const onRewarded = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
       onRewarded.remove();
       onFailed.remove();
-      adTxt.destroy();
-      this._reviving = false;
-      this._revive();
+      _restoreMusic();
+      // 3-second countdown before reviving
+      adTxt.setText('REVIVING IN  3...').setColor('#00ff88');
+      this.time.delayedCall(1000, () => { if (adTxt.active) adTxt.setText('REVIVING IN  2...'); });
+      this.time.delayedCall(2000, () => { if (adTxt.active) adTxt.setText('REVIVING IN  1...'); });
+      this.time.delayedCall(3000, () => {
+        if (adTxt.active) adTxt.destroy();
+        this._reviving = false;
+        this._revive();
+      });
     });
 
     const onFailed = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
       onRewarded.remove();
       onFailed.remove();
       adTxt.destroy();
+      _restoreMusic();
       this._reviving = false;
       this.contObjs.forEach(o => o.setVisible(true));
     });
@@ -1259,6 +1277,7 @@ export default class Game extends Phaser.Scene {
       onRewarded.remove();
       onFailed.remove();
       adTxt.destroy();
+      _restoreMusic();
       this._reviving = false;
       this.contObjs.forEach(o => o.setVisible(true));
     }
