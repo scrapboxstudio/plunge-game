@@ -1,6 +1,6 @@
 import { W, H, SAFE_TOP, BIOMES } from '../main.js';
 import { getItem, setItem } from '../storage.js';
-import { COIN_PACKAGES, purchaseCoins, isIAPReady, onCoinsGranted, offCoinsGranted } from '../iap.js';
+import { COIN_PACKAGES, purchaseCoins, isIAPReady, onCoinsGranted, offCoinsGranted, onPurchaseFailed, offPurchaseFailed } from '../iap.js';
 import {
   PLAYER_SPRITES, SKINS, TRAILS, THEMES,
   STORAGE_ACTIVE_SPRITE, STORAGE_OWNED_SPRITES,
@@ -493,7 +493,23 @@ export default class Menu extends Phaser.Scene {
         _closeConfirm();
         if (isIAPReady()) {
           this._coinsPageFeedback.setText('Opening store...');
-          await purchaseCoins(pkg.id);
+          // Auto-clear after 45s if native callbacks never fire (e.g. OS killed the sheet)
+          const _autoClear = this.time.delayedCall(45000, () => {
+            if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText('');
+          });
+          const _onFail = () => {
+            _autoClear?.remove(false);
+            offPurchaseFailed(_onFail);
+            if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText('');
+          };
+          onPurchaseFailed(_onFail);
+          try {
+            await purchaseCoins(pkg.id);
+          } catch (e) {
+            _autoClear?.remove(false);
+            offPurchaseFailed(_onFail);
+            if (this._coinsPageFeedback?.active) this._coinsPageFeedback.setText('');
+          }
         } else {
           const cur = parseInt(getItem(STORAGE_COINS) || '0', 10);
           const updated = cur + pkg.coins;
