@@ -1267,44 +1267,65 @@ export default class Game extends Phaser.Scene {
 
     const _restoreMusic = () => {
       this._musicSounds.forEach(s => {
-        this.tweens.add({ targets: s, volume: musicVol(), duration: 800 });
+        if (s?.active) this.tweens.add({ targets: s, volume: musicVol(), duration: 800 });
       });
     };
+    const _restoreUI = () => {
+      if (adTxt?.active) adTxt.destroy();
+      _restoreMusic();
+      this._reviving = false;
+      this.contObjs.forEach(o => { if (o?.active) o.setVisible(true); });
+    };
+
+    let _rewarded = false;
+    let _done     = false;
+    const _cleanup = () => {
+      if (_done) return;
+      _done = true;
+      try { onRewarded?.remove(); } catch {}
+      try { onDismissed?.remove(); } catch {}
+      try { onFailed?.remove(); } catch {}
+      adTimeout?.remove(false);
+    };
+
+    // Hard 30-second timeout: if no ad callback ever fires, unblock the continue UI
+    const adTimeout = this.time.delayedCall(30000, () => {
+      _cleanup();
+      _restoreUI();
+    });
 
     const onRewarded = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
-      onRewarded.remove();
-      onFailed.remove();
+      _rewarded = true;
       _restoreMusic();
-      // 3-second countdown before reviving
-      adTxt.setText('REVIVING IN  3...').setColor('#00ff88');
-      this.time.delayedCall(1000, () => { if (adTxt.active) adTxt.setText('REVIVING IN  2...'); });
-      this.time.delayedCall(2000, () => { if (adTxt.active) adTxt.setText('REVIVING IN  1...'); });
+      if (adTxt?.active) adTxt.setText('REVIVING IN  3...').setColor('#00ff88');
+      this.time.delayedCall(1000, () => { if (adTxt?.active) adTxt.setText('REVIVING IN  2...'); });
+      this.time.delayedCall(2000, () => { if (adTxt?.active) adTxt.setText('REVIVING IN  1...'); });
       this.time.delayedCall(3000, () => {
-        if (adTxt.active) adTxt.destroy();
+        _cleanup();
+        if (adTxt?.active) adTxt.destroy();
         this._reviving = false;
         this._revive();
       });
     });
 
+    // Dismissed fires when ad closes — no reward means user skipped or ad failed silently
+    const onDismissed = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
+      if (_rewarded) return; // reward path handles its own cleanup
+      _cleanup();
+      _restoreUI();
+    });
+
     const onFailed = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
-      onRewarded.remove();
-      onFailed.remove();
-      adTxt.destroy();
-      _restoreMusic();
-      this._reviving = false;
-      this.contObjs.forEach(o => o.setVisible(true));
+      _cleanup();
+      _restoreUI();
     });
 
     try {
       await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
       await AdMob.showRewardVideoAd();
     } catch (e) {
-      onRewarded.remove();
-      onFailed.remove();
-      adTxt.destroy();
-      _restoreMusic();
-      this._reviving = false;
-      this.contObjs.forEach(o => o.setVisible(true));
+      _cleanup();
+      _restoreUI();
     }
   }
 
@@ -2304,7 +2325,9 @@ export default class Game extends Phaser.Scene {
 
     const backBtn = mk(this.add.text(cx, H * 0.912, '‹  BACK', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0.5).setDepth(d + 1).setVisible(false).setInteractive({ useHandCursor: true }));
+    }).setOrigin(0.5).setDepth(d + 1).setVisible(false));
+    backBtn.setInteractive(new Phaser.Geom.Rectangle(-90, -24, 180, 48), Phaser.Geom.Rectangle.Contains);
+    backBtn.input.cursor = 'pointer';
     backBtn.on('pointerover', () => backBtn.setColor('#6688aa'));
     backBtn.on('pointerout',  () => backBtn.setColor('#2a3a44'));
     backBtn.on('pointerdown', () => { this._sfx.button?.stop(); this._sfx.button?.play(); objs.forEach(o => o.setVisible(false)); });

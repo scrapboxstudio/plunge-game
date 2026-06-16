@@ -370,7 +370,9 @@ export default class Menu extends Phaser.Scene {
 
     const closeBtn = mk(this.add.text(cx, oy + oh - 28, '✕  CLOSE', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true }));
+    }).setOrigin(0.5).setDepth(d).setVisible(false));
+    closeBtn.setInteractive(new Phaser.Geom.Rectangle(-90, -24, 180, 48), Phaser.Geom.Rectangle.Contains);
+    closeBtn.input.cursor = 'pointer';
     closeBtn.on('pointerover', () => closeBtn.setColor('#6688aa'));
     closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44').setAlpha(1));
     closeBtn.on('pointerdown', () => { closeBtn.setAlpha(0.65); this._sfx(); this._closeStore(); });
@@ -762,7 +764,9 @@ export default class Menu extends Phaser.Scene {
 
     const ipClose = mki(this.add.text(cx + ipW / 2 - 18, ipCY - ipH / 2 + 22, '✕', {
       fontSize: '16px', fontFamily: 'Arial Black', color: '#887799',
-    }).setOrigin(0.5).setDepth(d + 12).setVisible(false).setInteractive({ useHandCursor: true }));
+    }).setOrigin(0.5).setDepth(d + 12).setVisible(false));
+    ipClose.setInteractive(new Phaser.Geom.Rectangle(-24, -24, 48, 48), Phaser.Geom.Rectangle.Contains);
+    ipClose.input.cursor = 'pointer';
 
     const ipName = mki(this.add.text(cx, ipCY - ipH / 2 + 46, '', {
       fontSize: '22px', fontFamily: 'Arial Black', color: '#cccccc',
@@ -979,7 +983,10 @@ export default class Menu extends Phaser.Scene {
   _backBtn(cx, y, d, action) {
     const btn = this.add.text(cx - (W - 28) / 2 + 16, y, '‹  BACK', {
       fontSize: '17px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0, 0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true });
+    }).setOrigin(0, 0.5).setDepth(d).setVisible(false);
+    // Large touch target: 220px wide × 44px tall, anchored at origin (left-center)
+    btn.setInteractive(new Phaser.Geom.Rectangle(-10, -22, 220, 44), Phaser.Geom.Rectangle.Contains);
+    btn.input.cursor = 'pointer';
     btn.on('pointerover', () => btn.setColor('#6688aa'));
     btn.on('pointerout',  () => btn.setColor('#2a3a44').setAlpha(1));
     btn.on('pointerdown', () => { btn.setAlpha(0.65); this._sfx(); action(); });
@@ -1099,7 +1106,9 @@ export default class Menu extends Phaser.Scene {
 
     const closeBtn = mk(this.add.text(cx, oy + oh - 28, '✕  CLOSE', {
       fontSize: '18px', fontFamily: 'Arial Black', color: '#2a3a44',
-    }).setOrigin(0.5).setDepth(d).setVisible(false).setInteractive({ useHandCursor: true }));
+    }).setOrigin(0.5).setDepth(d).setVisible(false));
+    closeBtn.setInteractive(new Phaser.Geom.Rectangle(-90, -24, 180, 48), Phaser.Geom.Rectangle.Contains);
+    closeBtn.input.cursor = 'pointer';
     closeBtn.on('pointerover', () => closeBtn.setColor('#6688aa'));
     closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44').setAlpha(1));
     closeBtn.on('pointerdown', () => { closeBtn.setAlpha(0.65); this._sfx(); this._closeSettings(); });
@@ -1268,7 +1277,19 @@ export default class Menu extends Phaser.Scene {
   // ── MUSIC ──────────────────────────────────────────────────────────────────
 
   _startMenuMusic() {
-    if (this._menuMusic || !this.cache.audio.has('mainMenu')) return;
+    if (this._menuMusic) return;
+    if (!this.cache.audio.has('mainMenu')) {
+      // mainMenu.mp3 is lazy-loaded (not preloaded in Boot) to speed up startup
+      if (this._menuMusicLoading) return;
+      this._menuMusicLoading = true;
+      this.load.audio('mainMenu', 'assets/mainMenu.mp3');
+      this.load.start();
+      this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+        this._menuMusicLoading = false;
+        this._startMenuMusic();
+      });
+      return;
+    }
     this._menuMusic = this.sound.add('mainMenu', { volume: 0.7, loop: true });
     this._menuMusic.play();
     if (this.sound.locked) this.sound.once('unlocked', () => {

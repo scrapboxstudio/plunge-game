@@ -10,7 +10,20 @@ export async function initStorage(keys) {
     _Prefs = Preferences;
     await Promise.all(keys.map(async key => {
       const { value } = await _Prefs.get({ key });
-      if (value !== null) _cache[key] = value;
+      if (value !== null) {
+        _cache[key] = value;
+      } else {
+        // One-time migration: v1 stored data in localStorage, v2 uses Preferences.
+        // On first launch after update, copy any existing localStorage values across.
+        try {
+          const legacy = localStorage.getItem(key);
+          if (legacy !== null) {
+            _cache[key] = legacy;
+            await _Prefs.set({ key, value: legacy });
+            localStorage.removeItem(key);
+          }
+        } catch {}
+      }
     }));
   } else {
     for (const key of keys) {
