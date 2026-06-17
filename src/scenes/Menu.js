@@ -75,6 +75,12 @@ export default class Menu extends Phaser.Scene {
 
     // ── MUSIC ─────────────────────────────────────────────────────────────────
     this._menuMusic = null;
+    // Pre-fetch coralBGM in the background so it's cached before the player's
+    // first dive — Game.js will find it in cache and play immediately.
+    if (!this.cache.audio.has('coralBGM')) {
+      this.load.audio('coralBGM', 'assets/coralBGM.mp3');
+      this.load.start();
+    }
 
     // ── IAP COIN LISTENER ─────────────────────────────────────────────────────
     this._iapListener = (count, total) => {
@@ -1278,18 +1284,7 @@ export default class Menu extends Phaser.Scene {
 
   _startMenuMusic() {
     if (this._menuMusic) return;
-    if (!this.cache.audio.has('mainMenu')) {
-      // mainMenu.mp3 is lazy-loaded (not preloaded in Boot) to speed up startup
-      if (this._menuMusicLoading) return;
-      this._menuMusicLoading = true;
-      this.load.audio('mainMenu', 'assets/mainMenu.mp3');
-      this.load.start();
-      this.load.once(Phaser.Loader.Events.COMPLETE, () => {
-        this._menuMusicLoading = false;
-        this._startMenuMusic();
-      });
-      return;
-    }
+    // mainMenu.mp3 is preloaded in Boot — play directly from cache, no wait needed
     this._menuMusic = this.sound.add('mainMenu', { volume: 0.7, loop: true });
     this._menuMusic.play();
     if (this.sound.locked) this.sound.once('unlocked', () => {

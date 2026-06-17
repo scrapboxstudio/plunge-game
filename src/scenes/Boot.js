@@ -17,9 +17,9 @@ export default class Boot extends Phaser.Scene {
     }).setOrigin(0.5);
     this.load.on('progress', v => {
       bar.width = 240 * v;
-      pct.setText(`${Math.round(v * 100)}%`);
+      // When visual assets are done but music is still decoding, say so
+      pct.setText(v < 1 ? `${Math.round(v * 100)}%` : 'LOADING MUSIC...');
     });
-    // After all files download, audio decodes briefly before create() runs
     this.load.on('complete', () => pct.setText('STARTING...'));
 
     ['fish', 'star', 'octo', 'shark', 'kraken'].forEach(k => {
@@ -32,10 +32,13 @@ export default class Boot extends Phaser.Scene {
     this.load.audio('coinSFX',       'assets/coinSFX.wav');
     this.load.audio('invincibleSFX', 'assets/invincibleSFX.wav');
     this.load.audio('1upSFX',        'assets/1upSFX.wav');
+    // mainMenu preloaded so Menu starts with music already in cache (no silence).
+    // At 64 kbps (~960 KB) the progress bar holds at ~99% briefly while it decodes.
+    this.load.audio('mainMenu',      'assets/mainMenu.mp3');
 
     // Images for all biomes load upfront (needed as soon as walls spawn).
-    // All music is lazy-loaded during gameplay — mainMenu loads in Menu.js,
-    // coralBGM and beyond load in Game.js as each biome starts.
+    // coralBGM and beyond lazy-load in Game.js; coralBGM is also pre-fetched
+    // from Menu.js so it's cached before the player's first dive.
     BIOMES.forEach(b => {
       this.load.image(b.bgKey, `assets/${b.bgKey.slice(3)}.png`);
       [...b.bgSkins, ...b.fillSkins].forEach(s => this.load.image(s.key, s.path ?? `assets/${s.key}.png`));

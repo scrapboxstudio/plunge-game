@@ -1277,49 +1277,60 @@ export default class Game extends Phaser.Scene {
       this.contObjs.forEach(o => { if (o?.active) o.setVisible(true); });
     };
 
-    let _rewarded = false;
-    let _done     = false;
+    let _rewarded  = false;
+    let _done      = false;
+    let _failTimer = null; // clearTimeout handle for the 30-second hard timeout
+
+    const _cancelFail = () => {
+      if (_failTimer) { clearTimeout(_failTimer); _failTimer = null; }
+    };
     const _cleanup = () => {
       if (_done) return;
       _done = true;
-      try { onRewarded?.remove(); } catch {}
-      try { onDismissed?.remove(); } catch {}
-      try { onFailed?.remove(); } catch {}
-      adTimeout?.remove(false);
+      _cancelFail();
+      try { rwdListener?.remove(); } catch {}
+      try { dsmListener?.remove(); } catch {}
+      try { failListener?.remove(); } catch {}
     };
 
-    // Hard 30-second timeout: if no ad callback ever fires, unblock the continue UI
-    const adTimeout = this.time.delayedCall(30000, () => {
+    // Hard 30-second timeout — unblocks the player if no ad event ever fires.
+    // Uses setTimeout (not Phaser delayedCall) so it fires even while Phaser is paused.
+    _failTimer = setTimeout(() => {
       _cleanup();
       _restoreUI();
-    });
+    }, 30000);
 
-    const onRewarded = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
+    const rwdListener = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
+      if (_done) return; // cleanup already ran (e.g. timeout) — ignore late reward
       _rewarded = true;
+      _cancelFail(); // reward earned — cancel the 30-second give-up timer
       _restoreMusic();
       if (adTxt?.active) adTxt.setText('REVIVING IN  3...').setColor('#00ff88');
-      this.time.delayedCall(1000, () => { if (adTxt?.active) adTxt.setText('REVIVING IN  2...'); });
-      this.time.delayedCall(2000, () => { if (adTxt?.active) adTxt.setText('REVIVING IN  1...'); });
-      this.time.delayedCall(3000, () => {
+      // Use setTimeout (not Phaser delayedCall) — these must fire even if Phaser is
+      // still paused while the WebView sits behind the ad overlay.
+      setTimeout(() => { if (adTxt?.active) adTxt.setText('REVIVING IN  2...'); }, 1000);
+      setTimeout(() => { if (adTxt?.active) adTxt.setText('REVIVING IN  1...'); }, 2000);
+      setTimeout(() => {
         _cleanup();
         if (adTxt?.active) adTxt.destroy();
         this._reviving = false;
         this._revive();
-      });
+      }, 3000);
     });
 
-    // Dismissed fires when ad closes. On some Android devices Dismissed fires before Rewarded,
-    // so wait 600 ms before treating it as a skip — if Rewarded arrives in that window, no-op.
-    const onDismissed = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
-      if (_rewarded) return;
-      this.time.delayedCall(600, () => {
-        if (_rewarded) return;
+    // Dismissed fires when the ad overlay closes. On some Android devices it arrives
+    // before Rewarded (even when the player earned the reward), so wait 3 s before
+    // treating it as a skip — this lets a late Rewarded event still trigger the revive.
+    const dsmListener = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
+      if (_rewarded) return; // reward path is already counting down
+      setTimeout(() => {
+        if (_rewarded) return; // Rewarded arrived during the 3-second wait
         _cleanup();
         _restoreUI();
-      });
+      }, 3000);
     });
 
-    const onFailed = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
+    const failListener = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
       _cleanup();
       _restoreUI();
     });

@@ -1,4 +1,4 @@
-// Compresses all BGM MP3s to 96 kbps, reducing ~3.9 MB tracks to ~1.4 MB.
+// Compresses all BGM MP3s to 64 kbps, reducing ~3.9 MB tracks to ~960 KB.
 // Run once with: npm run compress-audio
 // Requires ffmpeg-static: npm install --save-dev ffmpeg-static
 
@@ -26,7 +26,7 @@ for (const file of readdirSync(dir)) {
     execFileSync(ffmpegStatic, [
       '-i', input,
       '-codec:a', 'libmp3lame',
-      '-b:a', '96k',
+      '-b:a', '64k',
       '-y', tmp,
     ], { stdio: 'pipe' });
 
