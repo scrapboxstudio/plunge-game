@@ -1308,11 +1308,15 @@ export default class Game extends Phaser.Scene {
       });
     });
 
-    // Dismissed fires when ad closes — no reward means user skipped or ad failed silently
+    // Dismissed fires when ad closes. On some Android devices Dismissed fires before Rewarded,
+    // so wait 600 ms before treating it as a skip — if Rewarded arrives in that window, no-op.
     const onDismissed = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
-      if (_rewarded) return; // reward path handles its own cleanup
-      _cleanup();
-      _restoreUI();
+      if (_rewarded) return;
+      this.time.delayedCall(600, () => {
+        if (_rewarded) return;
+        _cleanup();
+        _restoreUI();
+      });
     });
 
     const onFailed = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {

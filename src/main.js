@@ -18,9 +18,14 @@ const ALL_STORAGE_KEYS = [
 ];
 
 if (Capacitor.isNativePlatform()) {
-  import('@capacitor-community/admob').then(({ AdMob }) => {
-    AdMob.initialize({ requestTrackingAuthorization: false });
-  });
+  (async () => {
+    try {
+      const { AdMob } = await import('@capacitor-community/admob');
+      await AdMob.initialize({ requestTrackingAuthorization: false });
+      // Pre-load first rewarded ad so it's ready when the player first dies
+      await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
+    } catch {}
+  })();
   import('./iap.js').then(({ initIAP }) => initIAP());
 }
 
