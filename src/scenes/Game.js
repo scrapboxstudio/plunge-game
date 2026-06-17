@@ -1149,7 +1149,12 @@ export default class Game extends Phaser.Scene {
   _showContinue() {
     this.lives = parseInt(getItem(STORAGE_LIVES) || '0', 10);
     this._updateContinueLives();
-    this.contTipTxt.setText('tip: ' + Phaser.Utils.Array.GetRandom(TIPS));
+    // Clear any leftover "life earned" pulse so the button isn't left scaled.
+    this.tweens.killTweensOf([this.useLifeBtn, this.useLifeTxt].filter(Boolean));
+    this.useLifeBtn?.setScale(1);
+    this.useLifeTxt?.setScale(1);
+    // Reset the tip to its default style (the ad "life earned" cue recolours it).
+    this.contTipTxt.setColor('#8899aa').setText('tip: ' + Phaser.Utils.Array.GetRandom(TIPS));
     this.contObjs.forEach(o => o.setVisible(true));
     this.contCountdown = 10;
     this.contTxt.setText('10');
@@ -1260,10 +1265,15 @@ export default class Game extends Phaser.Scene {
     this._revive();
   }
 
+  // Watch a rewarded ad to earn a life. Deliberately does NOT auto-revive — every
+  // attempt to resume the run from the ad-dismiss callback raced the WebView regaining
+  // focus and froze. Instead we grant +1 life and re-show the continue screen so the
+  // player taps USE A LIFE to revive through the proven _useLife() → _revive() path.
+  // That tap happens on a clean, fully-focused frame, so there is no timing race.
   async _watchAd() {
-    if (this._reviving) return;
-    this._reviving = true;
-    this.contEvt?.remove();
+    if (this._adInProgress) return;
+    this._adInProgress = true;
+    this.contEvt?.remove();                 // stop the continue countdown during the ad
     this.contObjs.forEach(o => o.setVisible(false));
 
     // Silence music immediately — ad has its own audio
@@ -1281,23 +1291,26 @@ export default class Game extends Phaser.Scene {
       });
     };
 
-    // Two facts drive the outcome, tracked independently:
-    //   _rewarded — the player earned the reward
-    //   _resolved — a final decision (revive or restore) has already run
-    // The reward is detected via TWO redundant native signals that both fire the
-    // instant the reward is earned (while the ad is still on screen):
-    //   1. the Rewarded event listener, and
-    //   2. the value showRewardVideoAd() resolves with.
-    // Using both means a device that fails to bridge the event still revives.
-    // The actual revive is always deferred until Dismissed (ad closed) so it never
-    // runs behind the ad overlay.
-    let _rewarded  = false;
-    let _resolved  = false;
-    let _failTimer = null;
+    // _earned — the player has earned the life. Set by ANY of three signals:
+    //   1. the Rewarded event listener,
+    //   2. the value showRewardVideoAd() resolves with (native call.resolve at reward time),
+    //   3. a 30 s failsafe (a full rewarded ad) — covers devices that never report the
+    //      reward to JS, so a watched ad always grants the life.
+    // _resolved — the single final decision has run.
+    let _earned   = false;
+    let _resolved = false;
+    let failTimer = null;   // 30 s failsafe: assume the reward was earned
+    let backstop  = null;   // 45 s ultimate unblock if Dismissed never fires
     let rwdHandle = null, dsmHandle = null, failHandle = null;
 
-    const _finish = () => {
-      if (_failTimer) { clearTimeout(_failTimer); _failTimer = null; }
+    // Restore control to the continue screen. Granting the life and re-showing the
+    // continue screen are both safe even if the ad overlay is still up — nothing
+    // resumes the run until the player taps USE A LIFE afterwards.
+    const _resolve = () => {
+      if (_resolved) return;
+      _resolved = true;
+      if (failTimer) { clearTimeout(failTimer); failTimer = null; }
+      if (backstop)  { clearTimeout(backstop);  backstop  = null; }
       // addListener returns a Promise<PluginListenerHandle>; these are the resolved
       // handles, so .remove() works and listeners don't leak across ad views.
       try { rwdHandle?.remove(); }  catch {}
@@ -1305,56 +1318,49 @@ export default class Game extends Phaser.Scene {
       try { failHandle?.remove(); } catch {}
       if (adTxt?.active) adTxt.destroy();
       _restoreMusic();
+
+      if (_earned) {
+        const lives = parseInt(getItem(STORAGE_LIVES) || '0', 10) + 1;
+        setItem(STORAGE_LIVES, lives);
+      }
+      this._adInProgress = false;
+
+      // Re-show the continue screen (re-reads lives, activates USE A LIFE, restarts countdown)
+      this._showContinue();
+      if (_earned) this._showLifeEarnedCue();
     };
 
-    // Reward earned + ad closed → resume the run. The visible "GET READY 3·2·1"
-    // countdown lives in _revive(), so the player sees it after the ad closes.
-    const _resolveRevive = () => {
-      if (_resolved) return;
-      _resolved = true;
-      _finish();
-      this._reviving = false;   // _revive() re-sets this; must be false before the call
-      this._revive();
-    };
-
-    // No reward (skipped / failed / timed out) → restore the continue screen.
-    const _resolveRestore = () => {
-      if (_resolved) return;
-      _resolved = true;
-      _finish();
-      this._reviving = false;
-      this.contObjs.forEach(o => { if (o?.active) o.setVisible(true); });
-    };
-
-    // Called when the ad has actually closed. By now the reward (if any) is known
-    // from the event and/or the show() promise; a short grace absorbs any lag.
-    const _decideAfterDismiss = () => {
-      if (_rewarded) { _resolveRevive(); return; }
-      setTimeout(() => { _rewarded ? _resolveRevive() : _resolveRestore(); }, 2500);
-    };
-
-    // Backstop: if no ad event ever arrives, unblock the player after 30 s.
-    // setTimeout (not Phaser delayedCall) so it still fires while Phaser is paused
-    // behind the ad overlay. If a reward was earned but Dismissed never came, revive.
-    _failTimer = setTimeout(() => {
-      _rewarded ? _resolveRevive() : _resolveRestore();
-    }, 30000);
-
-    // Await the handles so _finish()'s .remove() actually works.
-    rwdHandle  = await AdMob.addListener(RewardAdPluginEvents.Rewarded,    () => { _rewarded = true; });
-    dsmHandle  = await AdMob.addListener(RewardAdPluginEvents.Dismissed,   () => { _decideAfterDismiss(); });
-    failHandle = await AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => { _resolveRestore(); });
+    // 30 s failsafe — after a full ad, treat the reward as earned even if no JS signal came.
+    failTimer = setTimeout(() => { _earned = true; }, 30000);
+    // 45 s backstop — if Dismissed never fires, still hand control back (life already earned).
+    backstop  = setTimeout(() => { _resolve(); }, 45000);
 
     try {
+      // Await the handles so .remove() actually works. Inside the try so any
+      // registration/show failure routes to _resolve() and unblocks the button.
+      rwdHandle  = await AdMob.addListener(RewardAdPluginEvents.Rewarded,     () => { _earned = true; });
+      dsmHandle  = await AdMob.addListener(RewardAdPluginEvents.Dismissed,    () => { _resolve(); });
+      failHandle = await AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => { _resolve(); });
+
       await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
       // showRewardVideoAd() resolves with the reward item the instant it's earned
-      // (ad still showing) — a backup to the Rewarded event. Record it; the Dismissed
-      // handler performs the revive once the ad closes. On a skip this promise simply
-      // never resolves, which is fine: the Dismissed event still drives the outcome.
+      // (ad still showing) — a backup to the Rewarded event. On a skip it simply never
+      // resolves, which is fine: the Dismissed event still drives the outcome.
       const reward = await AdMob.showRewardVideoAd();
-      if (reward) _rewarded = true;
+      if (reward) _earned = true;
     } catch (e) {
-      _resolveRestore();
+      _resolve();
+    }
+  }
+
+  // Brief cue shown on the continue screen after an ad grants a life.
+  _showLifeEarnedCue() {
+    if (this.contTipTxt?.active) {
+      this.contTipTxt.setText('✓  1 LIFE EARNED  —  tap USE A LIFE to continue').setColor('#88bb00');
+    }
+    const targets = [this.useLifeBtn, this.useLifeTxt].filter(o => o?.active);
+    if (targets.length) {
+      this.tweens.add({ targets, scaleX: 1.08, scaleY: 1.08, yoyo: true, repeat: 3, duration: 220 });
     }
   }
 
