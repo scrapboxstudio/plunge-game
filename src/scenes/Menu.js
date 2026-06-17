@@ -1284,7 +1284,19 @@ export default class Menu extends Phaser.Scene {
 
   _startMenuMusic() {
     if (this._menuMusic) return;
-    // mainMenu.mp3 is preloaded in Boot — play directly from cache, no wait needed
+    // mainMenu.mp3 is preloaded in Boot so this normally plays straight from cache.
+    // Fallback: if the boot load failed, lazy-load it once rather than play silence.
+    if (!this.cache.audio.exists('mainMenu')) {
+      if (this._menuMusicLoading) return;
+      this._menuMusicLoading = true;
+      this.load.audio('mainMenu', 'assets/mainMenu.mp3');
+      this.load.once(Phaser.Loader.Events.COMPLETE, () => {
+        this._menuMusicLoading = false;
+        this._startMenuMusic();
+      });
+      this.load.start();
+      return;
+    }
     this._menuMusic = this.sound.add('mainMenu', { volume: 0.7, loop: true });
     this._menuMusic.play();
     if (this.sound.locked) this.sound.once('unlocked', () => {

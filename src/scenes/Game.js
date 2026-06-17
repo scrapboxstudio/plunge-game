@@ -529,7 +529,10 @@ export default class Game extends Phaser.Scene {
     const music   = this.sound.add(key, { volume: 0, loop: false });
     this._musicSounds.push(music);
     music.play();
-    this.tweens.add({ targets: music, volume: musicVol(), duration: FADE_MS });
+    // First track of a run fades in fast (1.2 s) so music is audible within a second
+    // of diving; later tracks use the full 7 s crossfade for smooth biome transitions.
+    const fadeIn = this._currentMusic ? FADE_MS : 1200;
+    this.tweens.add({ targets: music, volume: musicVol(), duration: fadeIn });
 
     const prev = this._currentMusic;
     if (prev) {
@@ -1270,77 +1273,70 @@ export default class Game extends Phaser.Scene {
         if (s?.active) this.tweens.add({ targets: s, volume: musicVol(), duration: 800 });
       });
     };
-    const _restoreUI = () => {
+
+    // AdMob's documented order is Rewarded → Dismissed, but some Android devices
+    // deliver them reversed. To stay order-independent we only RECORD the reward,
+    // then make the revive/restore decision once the ad is actually dismissed.
+    let _rewarded  = false;  // user earned the reward
+    let _resolved  = false;  // a final decision (revive or restore) has been made
+    let _failTimer = null;   // setTimeout handle for the 30-second backstop
+
+    const _finish = () => {
+      if (_failTimer) { clearTimeout(_failTimer); _failTimer = null; }
+      try { rwdListener?.remove(); } catch {}
+      try { dsmListener?.remove(); } catch {}
+      try { failListener?.remove(); } catch {}
       if (adTxt?.active) adTxt.destroy();
       _restoreMusic();
+    };
+
+    // Reward earned + ad closed → resume the run. The visible "GET READY 3·2·1"
+    // countdown lives in _revive(), so the player sees it after the ad closes.
+    const _resolveRevive = () => {
+      if (_resolved) return;
+      _resolved = true;
+      _finish();
+      this._reviving = false;   // _revive() re-sets this; must be false before the call
+      this._revive();
+    };
+
+    // No reward (skipped / failed / timed out) → restore the continue screen.
+    const _resolveRestore = () => {
+      if (_resolved) return;
+      _resolved = true;
+      _finish();
       this._reviving = false;
       this.contObjs.forEach(o => { if (o?.active) o.setVisible(true); });
     };
 
-    let _rewarded  = false;
-    let _done      = false;
-    let _failTimer = null; // clearTimeout handle for the 30-second hard timeout
-
-    const _cancelFail = () => {
-      if (_failTimer) { clearTimeout(_failTimer); _failTimer = null; }
-    };
-    const _cleanup = () => {
-      if (_done) return;
-      _done = true;
-      _cancelFail();
-      try { rwdListener?.remove(); } catch {}
-      try { dsmListener?.remove(); } catch {}
-      try { failListener?.remove(); } catch {}
-    };
-
-    // Hard 30-second timeout — unblocks the player if no ad event ever fires.
-    // Uses setTimeout (not Phaser delayedCall) so it fires even while Phaser is paused.
+    // Backstop: if no ad event ever arrives, unblock the player after 30 s.
+    // setTimeout (not Phaser delayedCall) so it still fires while Phaser is paused
+    // behind the ad overlay. If a reward was earned but Dismissed never came, revive.
     _failTimer = setTimeout(() => {
-      _cleanup();
-      _restoreUI();
+      _rewarded ? _resolveRevive() : _resolveRestore();
     }, 30000);
 
     const rwdListener = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
-      if (_done) return; // cleanup already ran (e.g. timeout) — ignore late reward
-      _rewarded = true;
-      _cancelFail(); // reward earned — cancel the 30-second give-up timer
-      _restoreMusic();
-      if (adTxt?.active) adTxt.setText('REVIVING IN  3...').setColor('#00ff88');
-      // Use setTimeout (not Phaser delayedCall) — these must fire even if Phaser is
-      // still paused while the WebView sits behind the ad overlay.
-      setTimeout(() => { if (adTxt?.active) adTxt.setText('REVIVING IN  2...'); }, 1000);
-      setTimeout(() => { if (adTxt?.active) adTxt.setText('REVIVING IN  1...'); }, 2000);
-      setTimeout(() => {
-        _cleanup();
-        if (adTxt?.active) adTxt.destroy();
-        this._reviving = false;
-        this._revive();
-      }, 3000);
+      _rewarded = true; // record only — the decision happens on Dismissed
     });
 
-    // Dismissed fires when the ad overlay closes. On some Android devices it arrives
-    // before Rewarded (even when the player earned the reward), so wait 3 s before
-    // treating it as a skip — this lets a late Rewarded event still trigger the revive.
     const dsmListener = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
-      if (_rewarded) return; // reward path is already counting down
-      setTimeout(() => {
-        if (_rewarded) return; // Rewarded arrived during the 3-second wait
-        _cleanup();
-        _restoreUI();
-      }, 3000);
+      if (_rewarded) { _resolveRevive(); return; }
+      // Ad closed before the Rewarded event arrived (reversed order on some devices).
+      // Wait up to 2.5 s for it, then decide. 2.5 s is a wide margin over the
+      // sub-second delivery delays seen in practice; the 30 s backstop still applies.
+      setTimeout(() => { _rewarded ? _resolveRevive() : _resolveRestore(); }, 2500);
     });
 
     const failListener = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
-      _cleanup();
-      _restoreUI();
+      _resolveRestore();
     });
 
     try {
       await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
       await AdMob.showRewardVideoAd();
     } catch (e) {
-      _cleanup();
-      _restoreUI();
+      _resolveRestore();
     }
   }
 
