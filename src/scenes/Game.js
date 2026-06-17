@@ -1173,6 +1173,13 @@ export default class Game extends Phaser.Scene {
     this.contEvt?.remove();
     this.contObjs.forEach(o => o.setVisible(false));
 
+    // Defensive: the continue/ad path never pauses these, but guarantee the scene
+    // clock and physics are running so a revive can never land on a frozen world
+    // (e.g. if Phaser auto-paused while the native ad overlay had focus).
+    this.gamePaused  = false;
+    this.time.paused = false;
+    this.physics.resume();
+
     // Reset pressure and show diver — keep dead=true so the world stays frozen
     this.pressure   = 0;
     this.invincible = true;
@@ -1274,18 +1281,28 @@ export default class Game extends Phaser.Scene {
       });
     };
 
-    // AdMob's documented order is Rewarded → Dismissed, but some Android devices
-    // deliver them reversed. To stay order-independent we only RECORD the reward,
-    // then make the revive/restore decision once the ad is actually dismissed.
-    let _rewarded  = false;  // user earned the reward
-    let _resolved  = false;  // a final decision (revive or restore) has been made
-    let _failTimer = null;   // setTimeout handle for the 30-second backstop
+    // Two facts drive the outcome, tracked independently:
+    //   _rewarded — the player earned the reward
+    //   _resolved — a final decision (revive or restore) has already run
+    // The reward is detected via TWO redundant native signals that both fire the
+    // instant the reward is earned (while the ad is still on screen):
+    //   1. the Rewarded event listener, and
+    //   2. the value showRewardVideoAd() resolves with.
+    // Using both means a device that fails to bridge the event still revives.
+    // The actual revive is always deferred until Dismissed (ad closed) so it never
+    // runs behind the ad overlay.
+    let _rewarded  = false;
+    let _resolved  = false;
+    let _failTimer = null;
+    let rwdHandle = null, dsmHandle = null, failHandle = null;
 
     const _finish = () => {
       if (_failTimer) { clearTimeout(_failTimer); _failTimer = null; }
-      try { rwdListener?.remove(); } catch {}
-      try { dsmListener?.remove(); } catch {}
-      try { failListener?.remove(); } catch {}
+      // addListener returns a Promise<PluginListenerHandle>; these are the resolved
+      // handles, so .remove() works and listeners don't leak across ad views.
+      try { rwdHandle?.remove(); }  catch {}
+      try { dsmHandle?.remove(); }  catch {}
+      try { failHandle?.remove(); } catch {}
       if (adTxt?.active) adTxt.destroy();
       _restoreMusic();
     };
@@ -1309,6 +1326,13 @@ export default class Game extends Phaser.Scene {
       this.contObjs.forEach(o => { if (o?.active) o.setVisible(true); });
     };
 
+    // Called when the ad has actually closed. By now the reward (if any) is known
+    // from the event and/or the show() promise; a short grace absorbs any lag.
+    const _decideAfterDismiss = () => {
+      if (_rewarded) { _resolveRevive(); return; }
+      setTimeout(() => { _rewarded ? _resolveRevive() : _resolveRestore(); }, 2500);
+    };
+
     // Backstop: if no ad event ever arrives, unblock the player after 30 s.
     // setTimeout (not Phaser delayedCall) so it still fires while Phaser is paused
     // behind the ad overlay. If a reward was earned but Dismissed never came, revive.
@@ -1316,25 +1340,19 @@ export default class Game extends Phaser.Scene {
       _rewarded ? _resolveRevive() : _resolveRestore();
     }, 30000);
 
-    const rwdListener = AdMob.addListener(RewardAdPluginEvents.Rewarded, () => {
-      _rewarded = true; // record only — the decision happens on Dismissed
-    });
-
-    const dsmListener = AdMob.addListener(RewardAdPluginEvents.Dismissed, () => {
-      if (_rewarded) { _resolveRevive(); return; }
-      // Ad closed before the Rewarded event arrived (reversed order on some devices).
-      // Wait up to 2.5 s for it, then decide. 2.5 s is a wide margin over the
-      // sub-second delivery delays seen in practice; the 30 s backstop still applies.
-      setTimeout(() => { _rewarded ? _resolveRevive() : _resolveRestore(); }, 2500);
-    });
-
-    const failListener = AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => {
-      _resolveRestore();
-    });
+    // Await the handles so _finish()'s .remove() actually works.
+    rwdHandle  = await AdMob.addListener(RewardAdPluginEvents.Rewarded,    () => { _rewarded = true; });
+    dsmHandle  = await AdMob.addListener(RewardAdPluginEvents.Dismissed,   () => { _decideAfterDismiss(); });
+    failHandle = await AdMob.addListener(RewardAdPluginEvents.FailedToShow, () => { _resolveRestore(); });
 
     try {
       await AdMob.prepareRewardVideoAd({ adId: 'ca-app-pub-1522961874159114/2489265257' });
-      await AdMob.showRewardVideoAd();
+      // showRewardVideoAd() resolves with the reward item the instant it's earned
+      // (ad still showing) — a backup to the Rewarded event. Record it; the Dismissed
+      // handler performs the revive once the ad closes. On a skip this promise simply
+      // never resolves, which is fine: the Dismissed event still drives the outcome.
+      const reward = await AdMob.showRewardVideoAd();
+      if (reward) _rewarded = true;
     } catch (e) {
       _resolveRestore();
     }
