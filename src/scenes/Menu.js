@@ -1265,16 +1265,16 @@ export default class Menu extends Phaser.Scene {
 
     mk(this.add.rectangle(W / 2, H * 0.56, W * 0.62, 1.5, 0x0088bb).setAlpha(0.35).setDepth(d + 2));
 
-    // Version changelog
-    mk(this.add.text(W / 2, H * 0.605, '— v3.2 LAUNCH UPDATE —', {
+    // Version changelog — keep this in sync with every release (latest update only)
+    mk(this.add.text(W / 2, H * 0.605, '— v3.4.0 UPDATE —', {
       fontSize: '11px', fontFamily: 'Arial Black', color: '#005577',
     }).setOrigin(0.5).setDepth(d + 2));
 
-    mk(this.add.text(W / 2, H * 0.644, 'New: Kraken skin — all abilities combined', {
+    mk(this.add.text(W / 2, H * 0.644, 'Menus now fit every screen size', {
       fontSize: '12px', fontFamily: 'Arial', color: '#2a4455',
     }).setOrigin(0.5).setDepth(d + 2));
 
-    mk(this.add.text(W / 2, H * 0.673, 'Stability fixes & smoother performance', {
+    mk(this.add.text(W / 2, H * 0.673, 'Smoother revives, faster music & fixes', {
       fontSize: '12px', fontFamily: 'Arial', color: '#2a4455',
     }).setOrigin(0.5).setDepth(d + 2));
 
