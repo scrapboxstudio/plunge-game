@@ -1,4 +1,5 @@
 import { W, H, SAFE_TOP, BIOMES } from '../main.js';
+import { attachFitScroll, fitText } from '../ui/fitScroll.js';
 import { getItem, setItem } from '../storage.js';
 import { COIN_PACKAGES, purchaseCoins, isIAPReady, onCoinsGranted, offCoinsGranted, onPurchaseFailed, offPurchaseFailed } from '../iap.js';
 import {
@@ -293,6 +294,29 @@ export default class Menu extends Phaser.Scene {
       { route: 'cosmetics_theme',  title: 'THEMES',       data: THEMES,         ownedKey: STORAGE_OWNED_THEMES,    activeKey: STORAGE_ACTIVE_THEME    },
     ];
     this._cosmeticPages.forEach(p => this._buildStoreCosmeticPage(d + 1, oy, oh, cw, cx, p));
+
+    // Make every store page fit any screen: shrink to fit, scroll only if still too tall.
+    // Close button + transient status toasts stay pinned (excluded from the fitted group).
+    this._storeFit = [
+      this._attachPageFit(this._storeMainObjs,      oy, oh, cw, cx, { exclude: [this._storeMainClose], hasClose: true }),
+      this._attachPageFit(this._storeCoinsObjs,     oy, oh, cw, cx, { exclude: [this._coinsPageFeedback] }),
+      this._attachPageFit(this._storeLivesObjs,     oy, oh, cw, cx, { exclude: [this._livesNotEnoughTxt] }),
+      this._attachPageFit(this._storeCosmeticsObjs, oy, oh, cw, cx, {}),
+      ...this._cosmeticPages.map(p => this._attachPageFit(p.objs, oy, oh, cw, cx, { exclude: [p.msgTxt] })),
+    ];
+  }
+
+  // Fit a store/settings page's content to the panel. `exclude` pins chrome (close/toasts)
+  // outside the fitted group; `hasClose` reserves bottom room for a pinned close button.
+  _attachPageFit(objs, oy, oh, cw, cx, opts = {}) {
+    const ex = new Set(opts.exclude || []);
+    const content = (objs || []).filter(o => o && !ex.has(o));
+    return attachFitScroll(this, content, {
+      top:    oy + 8,
+      bottom: oy + oh - (opts.hasClose ? 52 : 14),
+      left:   cx - cw / 2,
+      right:  cx + cw / 2,
+    });
   }
 
   _buildStoreMain(d, oy, oh, cw, cx) {
@@ -383,6 +407,7 @@ export default class Menu extends Phaser.Scene {
     closeBtn.on('pointerout',  () => closeBtn.setColor('#2a3a44').setAlpha(1));
     closeBtn.on('pointerdown', () => { closeBtn.setAlpha(0.65); this._sfx(); this._closeStore(); });
     closeBtn.on('pointerup',   () => closeBtn.setAlpha(1));
+    this._storeMainClose = closeBtn;  // pinned chrome — excluded from the fitted group
   }
 
   _buildStoreCoinsPage(d, oy, oh, cw, cx) {
@@ -930,6 +955,7 @@ export default class Menu extends Phaser.Scene {
   }
 
   _navTo(page) {
+    this._storeFit?.forEach(c => c.reset());  // start each freshly-shown page at the top
     this._storeMainObjs.forEach(o => o.setVisible(false));
     this._storeCoinsObjs.forEach(o => o.setVisible(false));
     this._storeCoinsConfirmObjs?.forEach(o => o.setVisible(false));
@@ -1034,6 +1060,11 @@ export default class Menu extends Phaser.Scene {
     const oh = H * 0.84;
     const cw = W - 28;
     const cx = W / 2;
+    // Lay the panel out as a flow scaled to the panel height (709 = design height at H=844),
+    // so on shorter screens every row compresses to fit instead of running off the bottom.
+    // Sliders are positioned (not scaled), so their horizontal drag math stays correct.
+    const k  = oh / 709;
+    const sy = v => oy + v * k;
     this._settingsObjs = [];
     const mk = o => { this._settingsObjs.push(o); return o; };
 
@@ -1041,25 +1072,25 @@ export default class Menu extends Phaser.Scene {
       .setDepth(d).setVisible(false).setInteractive());
     mk(this.add.rectangle(cx, oy + oh / 2, cw, oh, 0x040408)
       .setStrokeStyle(1.5, 0x445566, 0.7).setDepth(d).setVisible(false));
-    mk(this.add.text(cx, oy + 36, '⚙  SETTINGS', {
+    mk(this.add.text(cx, sy(36), '⚙  SETTINGS', {
       fontSize: '26px', fontFamily: 'Arial Black',
       color: '#6688aa', stroke: '#000', strokeThickness: 3,
     }).setOrigin(0.5).setDepth(d).setVisible(false));
-    mk(this.add.rectangle(cx, oy + 64, cw - 40, 1, 0x445566, 0.25).setDepth(d).setVisible(false));
+    mk(this.add.rectangle(cx, sy(64), cw - 40, 1, 0x445566, 0.25).setDepth(d).setVisible(false));
 
     // Volume sliders
-    this._buildVolumeSlider(mk, cx, oy + 175, d + 1, '🎵  MUSIC',
+    this._buildVolumeSlider(mk, cx, sy(175), d + 1, '🎵  MUSIC',
       STORAGE_VOL_MUSIC, STORAGE_MUTE_MUSIC, 0.7,
       (vol, muted) => { this._menuMusic?.setVolume(muted ? 0 : vol); });
 
-    this._buildVolumeSlider(mk, cx, oy + 340, d + 1, '🔊  SFX',
+    this._buildVolumeSlider(mk, cx, sy(340), d + 1, '🔊  SFX',
       STORAGE_VOL_SFX, STORAGE_MUTE_SFX, 0.7, () => {});
 
     // ── PARTICLE TRAIL TOGGLE ─────────────────────────────────────────────────
     const trkW  = W - 100;
     const trkL  = cx - trkW / 2;
     const trkR  = cx + trkW / 2;
-    const trlY  = oy + 432;
+    const trlY  = sy(432);
     let   trlOn = getItem(STORAGE_TRAIL) !== '0';
 
     mk(this.add.text(trkL, trlY, '✦  PARTICLE TRAIL', {
@@ -1086,22 +1117,22 @@ export default class Menu extends Phaser.Scene {
     });
 
     // ── CUSTOMIZE ─────────────────────────────────────────────────────────────
-    mk(this.add.rectangle(cx, oy + 490, cw - 40, 1, 0x445566, 0.20).setDepth(d).setVisible(false));
+    mk(this.add.rectangle(cx, sy(490), cw - 40, 1, 0x445566, 0.20).setDepth(d).setVisible(false));
 
-    mk(this.add.text(cx - (cw - 40) / 2, oy + 522, '✦  CUSTOMIZE', {
+    mk(this.add.text(cx - (cw - 40) / 2, sy(522), '✦  CUSTOMIZE', {
       fontSize: '17px', fontFamily: 'Arial Black', color: '#6611aa',
       stroke: '#000', strokeThickness: 2,
     }).setOrigin(0, 0.5).setDepth(d).setVisible(false));
 
-    const customizeBtn = mk(this.add.rectangle(cx, oy + 590, cw - 32, 70, 0x0a0018)
+    const customizeBtn = mk(this.add.rectangle(cx, sy(590), cw - 32, 70, 0x0a0018)
       .setStrokeStyle(1.2, 0x6611aa, 0.45).setDepth(d).setVisible(false)
       .setInteractive({ useHandCursor: true }));
 
-    mk(this.add.text(cx, oy + 582, '✦  Manage active cosmetics', {
+    mk(this.add.text(cx, sy(582), '✦  Manage active cosmetics', {
       fontSize: '16px', fontFamily: 'Arial Black', color: '#9944dd',
     }).setOrigin(0.5).setDepth(d + 1).setVisible(false));
 
-    mk(this.add.text(cx, oy + 604, 'Enable skins, effects & themes', {
+    mk(this.add.text(cx, sy(604), 'Enable skins, effects & themes', {
       fontSize: '12px', fontFamily: 'Arial', color: '#445566',
     }).setOrigin(0.5).setDepth(d + 1).setVisible(false));
 

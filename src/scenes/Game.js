@@ -1330,10 +1330,12 @@ export default class Game extends Phaser.Scene {
       if (_earned) this._showLifeEarnedCue();
     };
 
-    // 30 s failsafe — after a full ad, treat the reward as earned even if no JS signal came.
-    failTimer = setTimeout(() => { _earned = true; }, 30000);
-    // 45 s backstop — if Dismissed never fires, still hand control back (life already earned).
-    backstop  = setTimeout(() => { _resolve(); }, 45000);
+    // 45 s failsafe — a rewarded ad takes a few seconds to start, then runs ~30 s. Waiting
+    // 45 s means the reward has almost certainly fired for real before we assume it, so a
+    // player who closes a few seconds early doesn't get a free life on an unpaid impression.
+    failTimer = setTimeout(() => { _earned = true; }, 45000);
+    // 60 s backstop — if Dismissed never fires at all, still hand control back (life earned).
+    backstop  = setTimeout(() => { _resolve(); }, 60000);
 
     try {
       // Await the handles so .remove() actually works. Inside the try so any

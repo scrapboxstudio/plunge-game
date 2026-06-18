@@ -1,4 +1,5 @@
 import { W, H } from '../main.js';
+import { fitText } from '../ui/fitScroll.js';
 import { getItem, setItem } from '../storage.js';
 
 const STORAGE_BEST  = 'plunge_best';
@@ -108,10 +109,10 @@ export default class GameOver extends Phaser.Scene {
     this.add.rectangle(W / 2, H * 0.215, W * 0.72, 1, isNew ? NEON.gold : NEON.pink, 0.25);
 
     // ── DEPTH ─────────────────────────────────────────────────────────────────
-    this.add.text(W / 2, H * 0.285, `${this.finalDepth}m`, {
+    fitText(this.add.text(W / 2, H * 0.285, `${this.finalDepth}m`, {
       fontSize: '78px', fontFamily: 'Arial Black',
       color: '#cccccc', stroke: NC.cyan, strokeThickness: 4,
-    }).setOrigin(0.5);
+    }).setOrigin(0.5), W * 0.86);
 
     this.add.text(W / 2, H * 0.395, 'DEPTH REACHED', {
       fontSize: '13px', fontFamily: 'Arial Black',
@@ -122,20 +123,20 @@ export default class GameOver extends Phaser.Scene {
     // Wobbly circle behind stats block
     this._drawWobblyCircle(W / 2, H * 0.505, 68);
 
-    this.add.text(W / 2, H * 0.465, `▼  ${this.biomeName.toUpperCase()}  ▼`, {
+    fitText(this.add.text(W / 2, H * 0.465, `▼  ${this.biomeName.toUpperCase()}  ▼`, {
       fontSize: '14px', fontFamily: 'Arial Black',
       color: NC.green, stroke: '#000', strokeThickness: 2,
-    }).setOrigin(0.5);
+    }).setOrigin(0.5), W * 0.86);
 
     this.add.text(W / 2, H * 0.515, 'BEST', {
       fontSize: '13px', fontFamily: 'Arial Black',
       color: isNew ? NC.gold : '#334455', stroke: '#000', strokeThickness: 2,
     }).setOrigin(0.5);
 
-    this.add.text(W / 2, H * 0.555, `${best}m`, {
+    fitText(this.add.text(W / 2, H * 0.555, `${best}m`, {
       fontSize: '36px', fontFamily: 'Arial Black',
       color: isNew ? NC.gold : '#5a6a7a', stroke: '#000', strokeThickness: 3,
-    }).setOrigin(0.5);
+    }).setOrigin(0.5), W * 0.7);
 
     // ── TIP ───────────────────────────────────────────────────────────────────
     this.add.rectangle(W / 2, H * 0.605, W * 0.72, 1, NEON.cyan, 0.15);
