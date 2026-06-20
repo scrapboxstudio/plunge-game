@@ -211,3 +211,60 @@ Copy this and check off as you go:
 □ SFX: score/collect
 □ BGM: main loop (seamless)
 ```
+
+---
+
+## ADD Blend Mode — Neon-on-Black Style (PLUNGE approach)
+
+This art style uses pure black as the "invisible" color. In Phaser's ADD blend mode, black pixels = fully transparent, bright pixels = glowing. No alpha channel needed.
+
+### Key Principle
+**Author sprites on pure black (#000000).** Bright/neon art on top glows when overlaid.
+
+### AI Prompts for ADD Blend Mode Sprites
+
+#### Neon Obstacles / Hazards
+```
+neon [shape/object] glowing art, pure black background (#000000), 
+bright [cyan/purple/orange/white] outline with soft glow, no transparency needed, 
+game sprite, high contrast --ar 1:1 --v 6
+```
+
+#### Neon Player Character
+```
+neon silhouette [character type], pure black background, bright glowing outline, 
+[color] neon glow effect, game sprite style, high contrast --ar 1:1 --v 6
+```
+
+#### Neon Particles / Trails
+```
+neon particle effect, pure black background, [color] glowing dots or streaks, 
+soft glow halo, game VFX sprite sheet, high contrast
+```
+
+#### Neon Biome Backgrounds (Wall/Cave style)
+```
+neon underwater cave walls, pure black background, glowing [cyan/blue/purple] 
+mineral formations, bioluminescent effect, 2D game art, vertical orientation --ar 9:16
+```
+
+### Engine Setup
+```js
+// Apply ADD blend mode to a sprite
+sprite.setBlendMode(Phaser.BlendModes.ADD);
+
+// Apply to a group
+this.obstacles = this.add.group({ blendMode: Phaser.BlendModes.ADD });
+
+// Layering tip: put a dim background behind ADD-mode sprites
+// The black in the sprite = fully transparent over whatever's behind it
+```
+
+### Color Palette That Works Well
+| Biome | Primary Neon | Accent |
+|---|---|---|
+| Ocean | Cyan (#00ffff) | Teal (#00ffcc) |
+| Cave | Orange (#ff6600) | Amber (#ffaa00) |
+| Volcano | Red (#ff2200) | Yellow (#ffcc00) |
+| Abyss | Purple (#aa00ff) | Violet (#cc44ff) |
+| The Void | White (#ffffff) | Pale blue (#aaccff) |
