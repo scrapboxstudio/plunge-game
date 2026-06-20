@@ -246,10 +246,15 @@ Read **`references/runtime-lessons.md` §1** for the rewarded-ad pattern that ac
 
 ## Step 7: Package & Sign
 
+Read `references/publishing-android.md` for the exact commands — Windows env vars, the
+`keytool -genkeypair` keystore command, the build.gradle signing block, manifest +
+`styles.xml` notch/fullscreen config, and the CLI AAB build.
+
 ```bash
 npm run build && npx cap sync
 npx cap open android   # opens Android Studio
 # Build → Generate Signed Bundle → Android App Bundle (.aab)
+# CLI alternative: cd android && ./gradlew bundleRelease
 ```
 
 ### Keystore Rules (CRITICAL)
